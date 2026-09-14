@@ -1,0 +1,25 @@
+# 构建产物
+bin/
+obj/
+.godot/
+*.dll
+*.pdb
+
+# 本地配置（含本机绝对路径，见 local.props.example）
+local.props
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# 系统
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 发布工具（含本机 git 安装路径，不随仓库发布）
+发布到GitHub.bat
+publish-to-github.ps1

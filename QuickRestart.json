@@ -1,0 +1,17 @@
+{
+  "id": "QuickRestart",
+  "name": "回溯之镜",
+  "author": "CodeArts",
+  "description": "练习与救场体验：暂停菜单四大重启按钮、战后重新挑战、致命暴毙拦截。",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": false,
+  "min_game_version": "0.111.0",
+  "dependencies": [
+    {
+      "id": "STS2-RitsuLib",
+      "min_version": "0.5.18"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+<Project>
+  <!-- 复制本文件为 local.props 并修改为你本机的路径 -->
+  <PropertyGroup>
+    <Sts2Dir>E:/Slay the Spire 2</Sts2Dir>
+    <Sts2DataDir>$(Sts2Dir)/data_sts2_windows_x86_64</Sts2DataDir>
+    <RitsuLibDir>$(Sts2Dir)/mods/STS2-RitsuLib/lib/0.111.0</RitsuLibDir>
+    <ModOutputDir>$(Sts2Dir)/mods/QuickRestart</ModOutputDir>
+  </PropertyGroup>
+</Project>
