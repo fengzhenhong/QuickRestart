@@ -23,3 +23,6 @@ Desktop.ini
 # 发布工具（含本机 git 安装路径，不随仓库发布）
 发布到GitHub.bat
 publish-to-github.ps1
+
+# Release 打包产物（上传到 GitHub Releases，不进源码库）
+*.zip
