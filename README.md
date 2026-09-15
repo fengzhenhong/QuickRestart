@@ -2,7 +2,7 @@
 
 《杀戮尖塔 2》练习与救场模组 —— 把「重来」做到极致：从重开一个房间到重开整局，全部基于**完整运行快照回滚**，牌序与随机数精确重现。
 
-> 适用于游戏 v0.111+，依赖 [STS2-RitsuLib](https://github.com/)（≥ 0.5.18）。
+> 适用于游戏 v0.111+，依赖 [STS2-RitsuLib](https://github.com/BAKAOLC/STS2-RitsuLib)（≥ 0.5.18）。
 
 ## 功能
 
@@ -55,7 +55,7 @@
 
 ## 安装
 
-1. 安装 [STS2-RitsuLib](https://github.com/)（前置库 mod）
+1. 安装 [STS2-RitsuLib](https://github.com/BAKAOLC/STS2-RitsuLib)（前置库 mod）
 2. 将 `QuickRestart` 文件夹（含 `QuickRestart.dll` 与 `QuickRestart.json`）放入游戏目录的 `mods/` 下
 3. 启动游戏即可
 
