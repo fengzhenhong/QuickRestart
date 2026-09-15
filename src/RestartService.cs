@@ -21,8 +21,22 @@ internal static class RestartService
         NewRun
     }
 
+    /// <summary>直接路径黑幕动画时长（秒）。NGame.Transition.FadeOut/FadeIn 默认各 0.8s —— 合计 1.6s 纯动画；
+    /// 直接路径改成短动画（0.3s）显著缩短黑屏，观感仍平滑。想更慢/更快只调这一个常量。</summary>
+    private const float DirectFadeSec = 0.22f;
+
+    /// <summary>0=空闲 1=重启进行中。一次重启要跨多帧（回主菜单→等帧→读档，耗时数秒），
+    /// 期间快捷键仍可触发 —— 无重入保护会让两条流程交错（场景切换/读档互相踩），黑屏或状态错乱。</summary>
+    private static int _busy;
+
     public static async Task ExecuteRestart(RestartType type)
     {
+        if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 已有重启流程进行中，忽略本次触发 type={type}");
+            return;
+        }
+        RestartOverlay.Show();
         try
         {
             Entry.Logger?.Info($"[QuickRestart] 执行重启 type={type}");
@@ -45,6 +59,11 @@ internal static class RestartService
         catch (Exception ex)
         {
             Entry.Logger?.Error($"[QuickRestart] 重启失败 type={type}: {ex}");
+        }
+        finally
+        {
+            RestartOverlay.Hide();
+            Interlocked.Exchange(ref _busy, 0);
         }
     }
 
@@ -87,10 +106,11 @@ internal static class RestartService
         }
 
         var preSnap = RoomEntryTracker.PreRoomSnapshot;
-        if (preSnap == null)
+        if (preSnap == null || !RoomEntryTracker.IsSnapshotForCurrentRun(preSnap))
         {
-            // 兜底（如进房早于补丁生效）：新建房间重进 —— 牌序会重新随机
-            Entry.Logger?.Warn("[QuickRestart] 无进房前快照，回退为新建房间重进（牌序会重新随机）");
+            // 兜底（快照缺失，或属于上一局——玩家用游戏自带流程开新局时旧快照残留）：
+            // 新建房间重进 —— 牌序会重新随机
+            Entry.Logger?.Warn("[QuickRestart] 无可用进房前快照（缺失或属于上一局），回退为新建房间重进（牌序会重新随机）");
             RoomEntryTracker.RestorePreRoomState();
             await RunManager.Instance.EnterRoom(RebuildRoomInstance(room, state));
             Entry.Logger?.Info("[QuickRestart] 重启房间完成（回退路径）");
@@ -106,14 +126,51 @@ internal static class RestartService
             // ★ 精确重现：先经官方读档流程回滚到"进房前"（RNG 一并回滚），
             //   再自动重进房间 —— 洗牌/怪物与首次进房完全一致（牌序相同，适合练习同一场战斗）。
             Entry.Logger?.Info("[QuickRestart] 重启房间：回滚到进房前（RNG 一并回滚，牌序将与首次进房一致）");
+            long t0 = (long)Time.GetTicksMsec();
+            bool direct = false;
+            RunState? runState = null;
 
-            await NGame.Instance!.ReturnToMainMenu();
-            await WaitFrames(5);
+            if (SettingsManager.Current.FastRestartSkipMenu)
+            {
+                // ④ 直接路径：FadeOut + CleanUp 后直接读档（SetUpSavedSingleplayer 只要求 State==null，
+                //    CleanUp 即满足）—— 跳过主菜单资源预载与场景创建；异常自动回退旧路径。
+                try
+                {
+                    // 反序列化与淡出并行：FromSerializable 是纯 CPU 构建（不碰 RunManager 状态），
+                    // 放在淡出动画推进期间执行，等于把它藏进 0.22s 黑幕里（省 10~100ms 黑屏）。
+                    var fadeTask = NGame.Instance!.Transition.FadeOut(DirectFadeSec);
+                    runState = RunState.FromSerializable(preSnap);
+                    await fadeTask;
+                    LogStep("重启房间", t0, "FadeOut");
+                    RunManager.Instance.CleanUp();
+                    LogStep("重启房间", t0, "CleanUp");
 
-            var runState = RunState.FromSerializable(preSnap);
-            await RunManager.Instance.SetUpSavedSingleplayer(runState, preSnap);
-            await NGame.Instance.LoadRun(runState, null);
-            await WaitFrames(5);
+                    await RunManager.Instance.SetUpSavedSingleplayer(runState, preSnap);
+                    await NGame.Instance.LoadRun(runState, null);
+                    await FadeInSafeAsync("重启房间");
+                    direct = true;
+                    LogStep("重启房间", t0, "读档");
+                }
+                catch (Exception ex)
+                {
+                    Entry.Logger?.Error($"[QuickRestart] 直接路径失败（重启房间），回退主菜单路径: {ex.Message}");
+                }
+            }
+
+            if (!direct)
+            {
+                await NGame.Instance!.ReturnToMainMenu();
+                await WaitFrames(5);
+
+                runState = RunState.FromSerializable(preSnap);
+                await RunManager.Instance.SetUpSavedSingleplayer(runState, preSnap);
+                await NGame.Instance.LoadRun(runState, null);
+            }
+
+            // ③ 等帧优化：LoadRun 内部已完成场景切换与本房间自动重进，2 帧确认即可
+            //   （旧路径的 5 帧是给"主菜单场景切换"留的，直接路径没有这次切换）
+            await WaitFrames(2);
+            Entry.Logger?.Info($"[QuickRestart] ⏱ 重启房间 · 回滚+读档 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
 
             // ══════════════════════════════════════════════════════════════════
             // ★ 修复：重启后商店物品/怪物/事件"刷新"（同一房间被生成了两次）
@@ -136,7 +193,7 @@ internal static class RestartService
             }
 
             Entry.Logger?.Info($"[QuickRestart] 读档未自动重进本房间（当前房间={restoredRoom?.RoomType.ToString() ?? "无"}），改为手动进入");
-            var roomToEnter = BuildRoom(roomType, actIndex, encounter, evt, runState);
+            var roomToEnter = BuildRoom(roomType, actIndex, encounter, evt, runState!);
             if (roomToEnter == null)
             {
                 Entry.Logger?.Warn($"[QuickRestart] 房间类型 {roomType} 暂不支持自动重进，已回滚到进房前（请手动进入）");
@@ -240,10 +297,11 @@ internal static class RestartService
 
         var snapshot = ActSnapshotStore.Snapshot;
 
-        // 快照缺失/不属于当前幕（如刚读档进入幕中途）→ 回退旧行为：仅重进本幕（不回滚物品）
-        if (snapshot == null || ActSnapshotStore.SnapshotActIndex != actIndex)
+        // 快照缺失/不属于当前幕/属于上一局（跨局残留）→ 回退旧行为：仅重进本幕（不回滚物品）
+        if (snapshot == null || ActSnapshotStore.SnapshotActIndex != actIndex
+            || !RoomEntryTracker.IsSnapshotForCurrentRun(snapshot))
         {
-            Entry.Logger?.Warn($"[QuickRestart] 无第 {actIndex + 1} 幕起点快照，回退为仅重进本幕");
+            Entry.Logger?.Warn($"[QuickRestart] 无第 {actIndex + 1} 幕起点快照（缺失/非本幕/属于上一局），回退为仅重进本幕");
             ClosePauseMenu();
             await RunManager.Instance.EnterAct(actIndex);
             return;
@@ -257,17 +315,49 @@ internal static class RestartService
 
         try
         {
-            // 官方读档流程（与主菜单"继续游戏"同一条路径，反编译确认）：
-            //   ReturnToMainMenu → CleanUp（内含 State=null）→
-            //   RunState.FromSerializable 重建 → SetUpSavedSingleplayer（要求 State==null）→ NGame.LoadRun
-            await NGame.Instance!.ReturnToMainMenu();
-            await WaitFrames(5);
+            // 官方读档流程：CleanUp（内含 State=null）→ RunState.FromSerializable 重建 →
+            //   SetUpSavedSingleplayer（要求 State==null）→ NGame.LoadRun。
+            // ④ 直接路径跳过其中的主菜单环节（FadeOut 后直接 CleanUp）；异常自动回退完整旧路径。
+            long t0 = (long)Time.GetTicksMsec();
+            bool direct = false;
 
-            var runState = RunState.FromSerializable(snapshot);
-            await RunManager.Instance.SetUpSavedSingleplayer(runState, snapshot);
-            await NGame.Instance.LoadRun(runState, null);
+            if (SettingsManager.Current.FastRestartSkipMenu)
+            {
+                try
+                {
+                    // 反序列化与淡出并行（同"重启房间"）
+                    var fadeTask = NGame.Instance!.Transition.FadeOut(DirectFadeSec);
+                    var runStateDirect = RunState.FromSerializable(snapshot);
+                    await fadeTask;
+                    LogStep("重启本层", t0, "FadeOut");
+                    RunManager.Instance.CleanUp();
+                    LogStep("重启本层", t0, "CleanUp");
 
-            Entry.Logger?.Info("[QuickRestart] 重启本层完成：已回滚到本幕起点");
+                    await RunManager.Instance.SetUpSavedSingleplayer(runStateDirect, snapshot);
+                    await NGame.Instance.LoadRun(runStateDirect, null);
+                    await FadeInSafeAsync("重启本层");
+                    direct = true;
+                    LogStep("重启本层", t0, "读档");
+                }
+                catch (Exception ex)
+                {
+                    Entry.Logger?.Error($"[QuickRestart] 直接路径失败（重启本层），回退主菜单路径: {ex.Message}");
+                }
+            }
+
+            if (!direct)
+            {
+                await NGame.Instance!.ReturnToMainMenu();
+                await WaitFrames(5);
+
+                var runState = RunState.FromSerializable(snapshot);
+                await RunManager.Instance.SetUpSavedSingleplayer(runState, snapshot);
+                await NGame.Instance.LoadRun(runState, null);
+            }
+
+            // ③ 等帧优化：LoadRun 已完成场景切换与房间自动重进，2 帧确认即可
+            await WaitFrames(2);
+            Entry.Logger?.Info($"[QuickRestart] 重启本层完成：已回滚到本幕起点 · 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
         }
         catch (Exception ex)
         {
@@ -302,6 +392,35 @@ internal static class RestartService
         {
             Entry.Logger?.Warn($"[QuickRestart] 设置 ShouldSave={value} 失败: {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>④ 分段耗时日志（验收直接路径收益用；t0=起点 GetTicksMsec）。</summary>
+    private static void LogStep(string tag, long startMs, string name)
+    {
+        Entry.Logger?.Info($"[QuickRestart] ⏱ {tag} · {name} = {(long)Time.GetTicksMsec() - startMs}ms");
+    }
+
+    /// <summary>
+    /// 直接路径收尾：恢复全屏转场（去掉黑幕）。
+    /// ⚠️ LoadRun / StartNewSingleplayerRun **自身不负责淡入** —— 官方调用点全部在之后手动
+    /// `Transition.FadeIn()`（如 NMainMenu 继续游戏：FadeOut → LoadRun → FadeIn）。
+    /// 旧路径之所以不黑屏，是因为主菜单场景 _Ready 里会自己 FadeIn；跳过主菜单后必须由我们补齐，
+    /// 否则全屏黑幕（Transition 的 threshold=1）永久不恢复 = 一直黑屏（2026-09-15 实测踩坑）。
+    /// 失败只记警告：读档本身已成功，不回退。
+    /// </summary>
+    private static async Task FadeInSafeAsync(string tag)
+    {
+        try
+        {
+            // 与游戏淡入重叠：先收起我方遮罩（0.15s 淡出）再启动 FadeIn（0.22s），
+            // 两个动画并行 → 省掉遮罩收尾的额外黑屏时间，观感也更连贯。
+            RestartOverlay.Hide();
+            await NGame.Instance!.Transition.FadeIn(DirectFadeSec);
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 恢复转场（FadeIn）失败（{tag}）: {ex.Message}");
         }
     }
 
@@ -402,14 +521,47 @@ internal static class RestartService
 
         try
         {
-            await NGame.Instance!.ReturnToMainMenu();
-            // 场景切换留帧：回主菜单 → 开新局不能在同一帧内连续执行（否则画面停在旧场景 = 黑屏）
-            await WaitFrames(5);
+            string tag = sameSeed ? "重启本局" : "重启新局";
+            long t0 = (long)Time.GetTicksMsec();
+            bool direct = false;
 
-            await NGame.Instance.StartNewSingleplayerRun(
-                character, true, acts, modifiers, seed, gameMode, ascension);
+            if (SettingsManager.Current.FastRestartSkipMenu)
+            {
+                // ④ 直接路径：FadeOut + CleanUp 后直接开新局 —— 跳过主菜单资源预载与场景创建。
+                //    CleanUp 幂等（State==null 直接 return）、从不调用 OnEnded（无痕靠的就是不走它）、自带 ShouldSave=false。
+                //    任何异常 → 落回下方旧路径（ReturnToMainMenu 全流程），玩家不会卡死。
+                try
+                {
+                    await NGame.Instance!.Transition.FadeOut(DirectFadeSec);
+                    LogStep(tag, t0, "FadeOut");
+                    RunManager.Instance.CleanUp();
+                    LogStep(tag, t0, "CleanUp");
 
-            Entry.Logger?.Info("[QuickRestart] 重启本局完成：同种子从头开始，旧局未写入历史/未中断连胜");
+                    await NGame.Instance.StartNewSingleplayerRun(
+                        character, true, acts, modifiers, seed, gameMode, ascension);
+                    await FadeInSafeAsync(tag);
+                    direct = true;
+                    LogStep(tag, t0, "StartRun");
+                }
+                catch (Exception ex)
+                {
+                    Entry.Logger?.Error($"[QuickRestart] 直接路径失败（{tag}），回退主菜单路径: {ex.Message}");
+                }
+            }
+
+            if (!direct)
+            {
+                await NGame.Instance!.ReturnToMainMenu();
+                // 场景切换留帧：回主菜单 → 开新局不能在同一帧内连续执行（否则画面停在旧场景 = 黑屏）
+                await WaitFrames(5);
+
+                await NGame.Instance.StartNewSingleplayerRun(
+                    character, true, acts, modifiers, seed, gameMode, ascension);
+            }
+
+            // ③ 等帧优化：新场景已在 StartRun 内 SetCurrentScene 并完成 EnterAct(0)，2 帧确认即可
+            await WaitFrames(2);
+            Entry.Logger?.Info($"[QuickRestart] {tag}完成：旧局未写入历史/未中断连胜 · 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
         }
         catch (Exception ex)
         {
@@ -423,8 +575,22 @@ internal static class RestartService
 
     public static async Task RetryCombatAsync()
     {
-        Entry.Logger?.Info("[QuickRestart] 重新挑战当前战斗");
-        await RestartRoomAsync();
+        if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
+        {
+            Entry.Logger?.Warn("[QuickRestart] 已有重启流程进行中，忽略重新挑战");
+            return;
+        }
+        RestartOverlay.Show();
+        try
+        {
+            Entry.Logger?.Info("[QuickRestart] 重新挑战当前战斗");
+            await RestartRoomAsync();
+        }
+        finally
+        {
+            RestartOverlay.Hide();
+            Interlocked.Exchange(ref _busy, 0);
+        }
     }
 
     /// <summary>
@@ -434,6 +600,25 @@ internal static class RestartService
     /// <para>与"重启房间"的区别：不自动重进房间（所以要额外退回地图屏）。</para>
     /// </summary>
     public static async Task RewindToMapAsync()
+    {
+        if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
+        {
+            Entry.Logger?.Warn("[QuickRestart] 已有重启流程进行中，忽略回到地图");
+            return;
+        }
+        RestartOverlay.Show();
+        try
+        {
+            await RewindToMapCoreAsync();
+        }
+        finally
+        {
+            RestartOverlay.Hide();
+            Interlocked.Exchange(ref _busy, 0);
+        }
+    }
+
+    private static async Task RewindToMapCoreAsync()
     {
         try
         {
@@ -445,10 +630,10 @@ internal static class RestartService
             }
 
             var snap = RoomEntryTracker.PreMapPointSnapshot;
-            if (snap == null)
+            if (snap == null || !RoomEntryTracker.IsSnapshotForCurrentRun(snap))
             {
-                // 兜底（如本房间不是从地图节点进入、补丁未生效）：沿用"重启房间"
-                Entry.Logger?.Warn("[QuickRestart] 无选路前快照，回退为重启房间（回滚到进房前并自动重进）");
+                // 兜底（快照缺失或属于上一局；如本房间不是从地图节点进入、补丁未生效）：沿用"重启房间"
+                Entry.Logger?.Warn("[QuickRestart] 无可用选路前快照（缺失或属于上一局），回退为重启房间（回滚到进房前并自动重进）");
                 await RestartRoomAsync();
                 return;
             }
@@ -465,14 +650,46 @@ internal static class RestartService
             try
             {
                 Entry.Logger?.Info("[QuickRestart] 回到地图：回滚到选路前（进入本房间之前）");
+                long t0 = (long)Time.GetTicksMsec();
+                bool direct = false;
 
-                await NGame.Instance!.ReturnToMainMenu();
-                await WaitFrames(5);
+                if (SettingsManager.Current.FastRestartSkipMenu)
+                {
+                    // ④ 直接路径：FadeOut + CleanUp 后直接读档，跳过主菜单；异常自动回退旧路径。
+                    try
+                    {
+                        // 反序列化与淡出并行（同"重启房间"）
+                        var fadeTask = NGame.Instance!.Transition.FadeOut(DirectFadeSec);
+                        var runStateDirect = RunState.FromSerializable(snap);
+                        await fadeTask;
+                        LogStep("回到地图", t0, "FadeOut");
+                        RunManager.Instance.CleanUp();
+                        LogStep("回到地图", t0, "CleanUp");
 
-                var runState = RunState.FromSerializable(snap);
-                await RunManager.Instance.SetUpSavedSingleplayer(runState, snap);
-                await NGame.Instance.LoadRun(runState, null);
-                await WaitFrames(5);
+                        await RunManager.Instance.SetUpSavedSingleplayer(runStateDirect, snap);
+                        await NGame.Instance.LoadRun(runStateDirect, null);
+                        await FadeInSafeAsync("回到地图");
+                        direct = true;
+                        LogStep("回到地图", t0, "读档");
+                    }
+                    catch (Exception ex)
+                    {
+                        Entry.Logger?.Error($"[QuickRestart] 直接路径失败（回到地图），回退主菜单路径: {ex.Message}");
+                    }
+                }
+
+                if (!direct)
+                {
+                    await NGame.Instance!.ReturnToMainMenu();
+                    await WaitFrames(5);
+
+                    var runState = RunState.FromSerializable(snap);
+                    await RunManager.Instance.SetUpSavedSingleplayer(runState, snap);
+                    await NGame.Instance.LoadRun(runState, null);
+                }
+
+                // ③ 等帧优化：LoadRun 已完成场景切换，2 帧确认即可
+                await WaitFrames(2);
 
                 // LoadRun 内部 LoadIntoLatestMapCoord 会把玩家送回"最后一个已访问坐标"的房间（上一节点）；
                 // 这里再退回地图屏 —— 本节点在快照中尚未被标记访问，因此地图上可以重新点击它。
@@ -483,7 +700,7 @@ internal static class RestartService
                     await WaitFrames(2);
                 }
 
-                Entry.Logger?.Info("[QuickRestart] 回到地图完成：可重新选路，或重新进入本节点再战（状态已回退到进房前）");
+                Entry.Logger?.Info($"[QuickRestart] 回到地图完成：可重新选路，或重新进入本节点再战（状态已回退到进房前）· 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
             }
             catch (Exception ex)
             {

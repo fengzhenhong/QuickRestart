@@ -65,7 +65,8 @@ internal static class ConfirmPopupHelper
         }
     }
 
-    public static void ShowDeathInterceptPopup(Action onRetry, Action onAbandon)
+    /// <summary>返回 true = 弹窗已创建并接入按钮；false = 创建失败（调用方需善后：复位拦截状态并解除战斗暂停）。</summary>
+    public static bool ShowDeathInterceptPopup(Action onRetry, Action onAbandon)
     {
         try
         {
@@ -73,14 +74,14 @@ internal static class ConfirmPopupHelper
             if (popup == null)
             {
                 Entry.Logger?.Warn("[QuickRestart] 创建刀下留人弹窗失败");
-                return;
+                return false;
             }
 
             var container = NModalContainer.Instance;
             if (container == null)
             {
                 Entry.Logger?.Warn("[QuickRestart] 弹窗容器不可用，无法显示刀下留人弹窗");
-                return;
+                return false;
             }
             container.Add(popup);
             _deathPopup = popup;
@@ -102,10 +103,12 @@ internal static class ConfirmPopupHelper
             });
 
             Entry.Logger?.Info("[QuickRestart] 显示原生刀下留人弹窗");
+            return true;
         }
         catch (Exception ex)
         {
             Entry.Logger?.Error($"[QuickRestart] 显示刀下留人弹窗失败: {ex}");
+            return false;
         }
     }
 }

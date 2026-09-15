@@ -21,8 +21,9 @@ internal static class ActSnapshotStore
     public static int SnapshotActIndex => _actIndex;
 
     /// <summary>
-    /// 地图屏就绪时尝试记录：同一幕只记一次（语义 = "本幕起点"）；换幕后自动重记。
+    /// 地图屏就绪时尝试记录：同一局同一幕只记一次（语义 = "本幕起点"）；换幕后自动重记。
     /// SetMap 在 EnterAct（新局 / 换幕）时触发；读档回幕 / 重复 SetMap 时 CurrentActIndex 未变 → 不覆盖。
+    /// 跨局防护：同幕号但种子不同（游戏自带流程开的上局残留）→ 重记。
     /// </summary>
     public static void CaptureIfNeeded()
     {
@@ -31,7 +32,10 @@ internal static class ActSnapshotStore
             var state = RunManager.Instance.DebugOnlyGetState();
             if (state == null)
                 return;
-            if (_snapshot != null && _actIndex == state.CurrentActIndex)
+            // 同幕且快照确实属于当前局才沿用；同幕号的旧局残留快照必须重记，
+            // 否则玩家用游戏自带流程开新局后按"重启本层"会回滚到旧局状态。
+            if (_snapshot != null && _actIndex == state.CurrentActIndex
+                && RoomEntryTracker.IsSnapshotForCurrentRun(_snapshot))
                 return;
             _snapshot = RunManager.Instance.ToSave(null);
             _actIndex = state.CurrentActIndex;

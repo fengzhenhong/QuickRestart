@@ -142,6 +142,30 @@ internal static class RoomEntryTracker
 
     public static AbstractRoom? GetLastRoom() => _lastRoom;
 
+    /// <summary>
+    /// 校验快照是否属于当前局（种子比对）。跨局残留防护：快照只在 mod 主动"重启本局/新局"时 Reset，
+    /// 玩家走游戏自带流程（死亡/通关后重开）开新局时旧局快照仍残留 —— 不校验会把新局回滚到旧局状态。
+    /// 校验异常一律按"不属于当前局"处理（调用方走兜底路径）。
+    /// </summary>
+    public static bool IsSnapshotForCurrentRun(SerializableRun? snapshot)
+    {
+        if (snapshot == null)
+            return false;
+        try
+        {
+            var state = RunManager.Instance.DebugOnlyGetState();
+            string? snapSeed = snapshot.SerializableRng?.Seed;
+            return state != null
+                && !string.IsNullOrEmpty(snapSeed)
+                && snapSeed == state.Rng.StringSeed;
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 快照归属校验失败（按不属于当前局处理）: {ex.Message}");
+            return false;
+        }
+    }
+
     public static Player? GetLocalPlayer(RunState state)
     {
         return state.Players.FirstOrDefault();

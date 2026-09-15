@@ -73,7 +73,7 @@ internal static class DeathInterceptCore
             // 立即复活：保持战斗状态有效，避免 HP=0 持续触发死亡相关判定
             RevivePlayer(localPlayer);
 
-            ConfirmPopupHelper.ShowDeathInterceptPopup(
+            bool popupShown = ConfirmPopupHelper.ShowDeathInterceptPopup(
                 onRetry: () =>
                 {
                     _isIntercepting = false;
@@ -85,6 +85,22 @@ internal static class DeathInterceptCore
                     _isIntercepting = false;
                     _ = RestartService.ExecuteRestart(RestartService.RestartType.RestartRun);
                 });
+
+            if (!popupShown)
+            {
+                // 弹窗不可用：玩家已被复活（HP≥1），复位拦截状态并解除暂停让战斗继续，
+                // 避免战斗永久冻结卡死游戏；再次死亡会重新尝试拦截。
+                Entry.Logger?.Warn("[QuickRestart] 刀下留人弹窗不可用，解除暂停继续战斗（跳过本次拦截）");
+                _isIntercepting = false;
+                try
+                {
+                    cm.Unpause();
+                }
+                catch (Exception ex)
+                {
+                    Entry.Logger?.Warn($"[QuickRestart] 解除战斗暂停失败: {ex.Message}");
+                }
+            }
 
             return true;
         }

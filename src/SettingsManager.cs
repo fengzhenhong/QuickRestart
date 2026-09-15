@@ -15,6 +15,12 @@ public sealed class QuickRestartSettings
     public bool EnableWinStreakProtection { get; set; } = false;
     public bool EnablePostCombatRetry { get; set; } = true;
     public bool ShowConfirmationDialog { get; set; } = true;
+
+    /// <summary>
+    /// ④ 直接路径开关：重启时跳过主菜单（Transition.FadeOut → CleanUp → 直接读档/开新局），
+    /// 省掉主菜单资源预载 + 场景创建两步大开销。失败自动回退旧路径（ReturnToMainMenu 全流程）。
+    /// </summary>
+    public bool FastRestartSkipMenu { get; set; } = true;
 }
 
 public static class SettingsManager
