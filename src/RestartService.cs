@@ -1,13 +1,16 @@
 using System.Reflection;
 using Godot;
+using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Rooms;
+using MegaCrit.Sts2.Core.Saves;
 
 namespace QuickRestart;
 
@@ -94,6 +97,8 @@ internal static class RestartService
         // 重建蓝图：必须在回滚前提取（旧 run 的对象引用在清理后不可靠）
         RoomType roomType = room.RoomType;
         int actIndex = state.CurrentActIndex;
+        // 本房间的地图坐标：回滚后用它"重新进入本节点"（等价于第一次点击该节点）
+        MapCoord? roomCoord = state.CurrentMapCoord;
         EncounterModel? encounter = null;
         EventModel? evt = null;
         if (room is CombatRoom combatRoom)
@@ -161,7 +166,8 @@ internal static class RestartService
                     LogStep("重启房间", t0, "CleanUp");
 
                     await RunManager.Instance.SetUpSavedSingleplayer(runState, preSnap);
-                    await NGame.Instance.LoadRun(runState, null);
+                    await RestoreRunSceneAsync(runState);
+                    await EnterRoomAgainAsync(runState, roomCoord, "重启房间");
                     await FadeInSafeAsync("重启房间");
                     direct = true;
                     LogStep("重启房间", t0, "读档");
@@ -179,7 +185,8 @@ internal static class RestartService
 
                 runState = RunState.FromSerializable(preSnap);
                 await RunManager.Instance.SetUpSavedSingleplayer(runState, preSnap);
-                await NGame.Instance.LoadRun(runState, null);
+                await RestoreRunSceneAsync(runState);
+                await EnterRoomAgainAsync(runState, roomCoord, "重启房间");
             }
 
             // ③ 等帧优化：LoadRun 内部已完成场景切换与本房间自动重进，2 帧确认即可
@@ -188,35 +195,13 @@ internal static class RestartService
             Entry.Logger?.Info($"[QuickRestart] ⏱ 重启房间 · 回滚+读档 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
 
             // ══════════════════════════════════════════════════════════════════
-            // ★ 修复：重启后商店物品/怪物/事件"刷新"（同一房间被生成了两次）
-            //   NGame.LoadRun 内部会调用 RunManager.LoadIntoLatestMapCoord —— 它依据
-            //   State.VisitedMapCoords 的最后一个坐标，自动把玩家重新送回"本房间"。
-            //   而进房前快照是在 RunManager.EnterRoom 之前捕获的，此时
-            //   AddVisitedMapCoord 已经执行过（EnterMapCoord：先记录坐标，再 EnterRoom），
-            //   所以快照里最后一个已访问坐标就是本房间 → 读档流程必然自动重进本房间，
-            //   且用的是快照里的 RNG（与首次进房完全一致）。
-            //   若此时再手动 EnterRoom，房间内容会被生成第二次 —— 第二次的 RNG
-            //   已被第一次消耗（如 PlayerRng.Shops/Rewards 的计数器），于是商店库存
-            //   凭空刷新（日志实证：同一房间被 Enter 两次，两次 "Card rarity: Rolled"
-            //   数值不同）。故：官方读档已精确重进本房间时，不再手动进房。
+            // 房间内容由快照 RNG 决定 → 与首次进房完全一致（牌序相同、商店库存不刷新）。
+            // "重新进入本节点"走 EnterRoomAgainAsync（AddVisitedMapCoord + EnterMapPointInternal，
+            // 等价于第一次点击该节点）—— 不再依赖 LoadRun 的"自动重进最后访问节点"：
+            // 那条路会 AppendToMapPointHistory 让地图历史凭空前进一格（玩家反馈的"前进一层"）。
             // ══════════════════════════════════════════════════════════════════
             var restoredRoom = RunManager.Instance.DebugOnlyGetState()?.CurrentRoom;
-            if (restoredRoom != null && restoredRoom.RoomType == roomType)
-            {
-                Entry.Logger?.Info($"[QuickRestart] 重启房间完成：读档已自动重进本房间（{roomType}），跳过重复进房（内容与首次一致，商店不会刷新）");
-                return;
-            }
-
-            Entry.Logger?.Info($"[QuickRestart] 读档未自动重进本房间（当前房间={restoredRoom?.RoomType.ToString() ?? "无"}），改为手动进入");
-            var roomToEnter = BuildRoom(roomType, actIndex, encounter, evt, runState!);
-            if (roomToEnter == null)
-            {
-                Entry.Logger?.Warn($"[QuickRestart] 房间类型 {roomType} 暂不支持自动重进，已回滚到进房前（请手动进入）");
-                return;
-            }
-
-            await RunManager.Instance.EnterRoom(roomToEnter);
-            Entry.Logger?.Info("[QuickRestart] 重启房间完成：已回滚到进房前并重新进入（牌序与首次一致）");
+            Entry.Logger?.Info($"[QuickRestart] 重启房间完成：当前房间={restoredRoom?.RoomType.ToString() ?? "无"}（期望 {roomType}；内容与首次一致，商店不会刷新）");
         }
         catch (Exception ex)
         {
@@ -356,7 +341,8 @@ internal static class RestartService
                     LogStep("重启本层", t0, "CleanUp");
 
                     await RunManager.Instance.SetUpSavedSingleplayer(runStateDirect, snapshot);
-                    await NGame.Instance.LoadRun(runStateDirect, null);
+                    await RestoreRunSceneAsync(runStateDirect);
+                    await RunManager.Instance.EnterRoom(new MapRoom());   // ★ 本幕起点 = 地图屏（不再自动重进上一格）
                     await FadeInSafeAsync("重启本层");
                     direct = true;
                     LogStep("重启本层", t0, "读档");
@@ -374,7 +360,8 @@ internal static class RestartService
 
                 var runState = RunState.FromSerializable(snapshot);
                 await RunManager.Instance.SetUpSavedSingleplayer(runState, snapshot);
-                await NGame.Instance.LoadRun(runState, null);
+                await RestoreRunSceneAsync(runState);
+                await RunManager.Instance.EnterRoom(new MapRoom());
             }
 
             // ③ 等帧优化：LoadRun 已完成场景切换与房间自动重进，2 帧确认即可
@@ -415,6 +402,60 @@ internal static class RestartService
             Entry.Logger?.Warn($"[QuickRestart] 设置 ShouldSave={value} 失败: {ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// 恢复对局场景（复刻官方 <c>NGame.LoadRun</c> 的前半段），**但跳过 LoadIntoLatestMapCoord**。
+    /// <para>⚠️ 为什么要复刻：官方 <c>LoadRun</c> 内部的 <c>LoadIntoLatestMapCoord</c> 会按
+    /// <c>VisitedMapCoords[^1]</c> "重进最后访问的那个节点"，而 <c>EnterMapPointInternal</c> 在
+    /// <c>preFinishedRoom == null</c> 时会 <c>AppendToMapPointHistory</c>（往地图点历史追加新的一格）
+    /// 并按节点类型重新 roll/新建房间 —— 玩家实测反馈的"每次刀下留人都会前进一层"即由此而来
+    /// （地图位置/历史被凭空推进一格）。</para>
+    /// <para>落点由调用方决定：<c>EnterRoom(new MapRoom())</c> 停在地图屏，或
+    /// <c>EnterMapPointInternal(...)</c> 重新进入指定节点（见 <see cref="EnterRoomAgainAsync"/>）。</para>
+    /// </summary>
+    private static async Task RestoreRunSceneAsync(RunState runState)
+    {
+        await PreloadManager.LoadRunAssets(runState.Players.Select(p => p.Character));
+        await PreloadManager.LoadActAssets(runState.Act);
+        RunManager.Instance.Launch();
+        NGame.Instance!.RootSceneContainer.SetCurrentScene(NRun.Create(runState));
+        await RunManager.Instance.GenerateMap();
+    }
+
+    /// <summary>
+    /// 重新进入指定地图节点 —— 等价于"第一次点击该节点"的完整流程：
+    /// <c>AddVisitedMapCoord</c>（标记访问）+ <c>EnterMapPointInternal</c>（按节点类型新建房间 +
+    /// 追加地图点历史，<paramref name="saveGame"/>:false 不写存档）。
+    /// 房间内容由快照 RNG 决定 → 与首次进入一致（商店不刷新、牌序相同）。
+    /// 坐标无效或失败时退化为"停在地图屏"。
+    /// </summary>
+    private static async Task EnterRoomAgainAsync(RunState runState, MapCoord? coord, string tag)
+    {
+        try
+        {
+            if (coord.HasValue)
+            {
+                MapPoint? point = runState.Map.GetPoint(coord.Value);
+                if (point != null)
+                {
+                    runState.AddVisitedMapCoord(coord.Value);
+                    await RunManager.Instance.EnterMapPointInternal(coord.Value.row + 1, point.PointType, null, saveGame: false);
+                    Entry.Logger?.Info($"[QuickRestart] {tag}：已重新进入节点 {coord.Value}（{point.PointType}）");
+                    return;
+                }
+                Entry.Logger?.Warn($"[QuickRestart] {tag}：节点 {coord.Value} 在地图上不存在，改为停在地图屏");
+            }
+            else
+            {
+                Entry.Logger?.Warn($"[QuickRestart] {tag}：节点坐标缺失，改为停在地图屏");
+            }
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] {tag}：重新进入节点失败，改为停在地图屏: {ex.Message}");
+        }
+        await RunManager.Instance.EnterRoom(new MapRoom());
     }
 
     /// <summary>
@@ -717,7 +758,8 @@ internal static class RestartService
                         LogStep("回到地图", t0, "CleanUp");
 
                         await RunManager.Instance.SetUpSavedSingleplayer(runStateDirect, snap);
-                        await NGame.Instance.LoadRun(runStateDirect, null);
+                        await RestoreRunSceneAsync(runStateDirect);
+                        await RunManager.Instance.EnterRoom(new MapRoom());   // ★ 停在地图屏（不再"自动重进上一格"）
                         await FadeInSafeAsync("回到地图");
                         direct = true;
                         LogStep("回到地图", t0, "读档");
@@ -735,17 +777,19 @@ internal static class RestartService
 
                     var runState = RunState.FromSerializable(snap);
                     await RunManager.Instance.SetUpSavedSingleplayer(runState, snap);
-                    await NGame.Instance.LoadRun(runState, null);
+                    await RestoreRunSceneAsync(runState);
+                    await RunManager.Instance.EnterRoom(new MapRoom());
                 }
 
                 // ③ 等帧优化：LoadRun 已完成场景切换，2 帧确认即可
                 await WaitFrames(2);
 
-                // LoadRun 内部 LoadIntoLatestMapCoord 会把玩家送回"最后一个已访问坐标"的房间（上一节点）；
-                // 这里再退回地图屏 —— 本节点在快照中尚未被标记访问，因此地图上可以重新点击它。
+                // 兜底：落点异常（理论上已在 MapRoom）时强制退回地图屏 ——
+                // 本节点在快照中尚未被标记访问，因此地图上可以重新点击它。
                 var restoredRoom = RunManager.Instance.DebugOnlyGetState()?.CurrentRoom;
                 if (restoredRoom is not MapRoom)
                 {
+                    Entry.Logger?.Warn($"[QuickRestart] 回到地图：落点异常（{restoredRoom?.RoomType.ToString() ?? "无"}），强制退回地图屏");
                     await RunManager.Instance.EnterRoom(new MapRoom());
                     await WaitFrames(2);
                 }
