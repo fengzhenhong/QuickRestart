@@ -12,7 +12,7 @@ internal static class ConfirmPopupHelper
 
     private static NAbandonRunConfirmPopup? _deathPopup;
 
-    /// <summary>死亡拦截弹窗是否仍在显示（被外部关闭/销毁后为 false）。</summary>
+    /// <summary>刀下留人弹窗是否仍在显示（被外部关闭/销毁后为 false）。</summary>
     public static bool IsDeathPopupOpen => _deathPopup != null && GodotObject.IsInstanceValid(_deathPopup);
 
     public static void ShowConfirm(string title, string message, Action onConfirm, Action? onCancel = null)
@@ -72,14 +72,14 @@ internal static class ConfirmPopupHelper
             var popup = NAbandonRunConfirmPopup.Create(null);
             if (popup == null)
             {
-                Entry.Logger?.Warn("[QuickRestart] 创建死亡拦截弹窗失败");
+                Entry.Logger?.Warn("[QuickRestart] 创建刀下留人弹窗失败");
                 return;
             }
 
             var container = NModalContainer.Instance;
             if (container == null)
             {
-                Entry.Logger?.Warn("[QuickRestart] 弹窗容器不可用，无法显示死亡拦截弹窗");
+                Entry.Logger?.Warn("[QuickRestart] 弹窗容器不可用，无法显示刀下留人弹窗");
                 return;
             }
             container.Add(popup);
@@ -87,25 +87,25 @@ internal static class ConfirmPopupHelper
 
             var vp = popup.GetNode<NVerticalPopup>("VerticalPopup");
             vp.DisconnectSignals();
-            vp.SetText("致命一击拦截", "生命归零！\n【确认】重新挑战当前战斗\n【取消】放弃本局（同一种子从头重开）");
+            vp.SetText("刀下留人", "生命归零！\n【确认】回到地图重新挑战（进本房间前）\n【取消】放弃本局（同一种子从头重开）");
             vp.InitYesButton(new LocString("main_menu_ui", "GENERIC_POPUP.confirm"), _ =>
             {
-                Entry.Logger?.Info("[QuickRestart] 死亡弹窗：点击【确认=重新挑战】");
+                Entry.Logger?.Info("[QuickRestart] 刀下留人弹窗：点击【确认=回到地图重新挑战】");
                 try { onRetry(); }
-                catch (Exception ex) { Entry.Logger?.Error($"[QuickRestart] 重新挑战失败: {ex}"); }
+                catch (Exception ex) { Entry.Logger?.Error($"[QuickRestart] 回到地图失败: {ex}"); }
             });
             vp.InitNoButton(_cancelLoc, _ =>
             {
-                Entry.Logger?.Info("[QuickRestart] 死亡弹窗：点击【取消=放弃本局（同种子重开）】");
+                Entry.Logger?.Info("[QuickRestart] 刀下留人弹窗：点击【取消=放弃本局（同种子重开）】");
                 try { onAbandon(); }
                 catch (Exception ex) { Entry.Logger?.Error($"[QuickRestart] 放弃本局失败: {ex}"); }
             });
 
-            Entry.Logger?.Info("[QuickRestart] 显示原生死亡拦截弹窗");
+            Entry.Logger?.Info("[QuickRestart] 显示原生刀下留人弹窗");
         }
         catch (Exception ex)
         {
-            Entry.Logger?.Error($"[QuickRestart] 显示死亡拦截弹窗失败: {ex}");
+            Entry.Logger?.Error($"[QuickRestart] 显示刀下留人弹窗失败: {ex}");
         }
     }
 }

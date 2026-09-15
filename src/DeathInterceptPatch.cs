@@ -42,7 +42,7 @@ internal static class DeathInterceptCore
                     return true;
                 }
 
-                Entry.Logger?.Warn("[QuickRestart] 死亡弹窗已关闭但拦截状态未复位，重置后按新死亡重新处理");
+                Entry.Logger?.Warn("[QuickRestart] 刀下留人弹窗已关闭但拦截状态未复位，重置后按新死亡重新处理");
                 _isIntercepting = false;
                 // 继续往下走：按当前致命伤害重新拦截并弹窗
             }
@@ -77,7 +77,8 @@ internal static class DeathInterceptCore
                 onRetry: () =>
                 {
                     _isIntercepting = false;
-                    _ = RestartService.RetryCombatAsync();
+                    // ★ 回到"进入本房间之前"（选路前）并停在地图屏 —— 而不是原地重开战斗
+                    _ = RestartService.RewindToMapAsync();
                 },
                 onAbandon: () =>
                 {
@@ -89,7 +90,7 @@ internal static class DeathInterceptCore
         }
         catch (Exception ex)
         {
-            Entry.Logger?.Error($"[QuickRestart] 死亡拦截失败（{source}）: {ex}");
+            Entry.Logger?.Error($"[QuickRestart] 刀下留人失败（{source}）: {ex}");
             _isIntercepting = false;
             return false;
         }

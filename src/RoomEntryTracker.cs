@@ -18,6 +18,7 @@ internal static class RoomEntryTracker
     private static AbstractRoom? _lastRoom;
 
     private static SerializableRun? _preRoomSnapshot;
+    private static SerializableRun? _preMapPointSnapshot;
     private static bool _suspended;
 
     /// <summary>
@@ -25,6 +26,13 @@ internal static class RoomEntryTracker
     /// RNG 一并回滚 → 重新进入时洗牌/怪物与首次完全一致（牌序精确重现）。
     /// </summary>
     public static SerializableRun? PreRoomSnapshot => _preRoomSnapshot;
+
+    /// <summary>
+    /// "选路前"完整运行快照（RunManager.EnterMapCoord 前缀记录，早于 AddVisitedMapCoord）：
+    /// 该地图坐标尚未被标记为已访问 → 回滚后玩家停在地图屏，可重新选路或重新进入本节点。
+    /// 刀下留人弹窗"回到地图重新挑战"的数据来源。
+    /// </summary>
+    public static SerializableRun? PreMapPointSnapshot => _preMapPointSnapshot;
 
     /// <summary>true = 暂停记录（重启房间的读档/自动重进期间，避免用中间状态覆盖快照）。</summary>
     public static bool Suspended
@@ -50,6 +58,23 @@ internal static class RoomEntryTracker
         }
     }
 
+    /// <summary>选路前（RunManager.EnterMapCoord 前，坐标尚未标记已访问）记录完整快照。</summary>
+    public static void CapturePreMapPointSnapshot()
+    {
+        if (_suspended)
+            return;
+        try
+        {
+            if (RunManager.Instance.DebugOnlyGetState() == null)
+                return;
+            _preMapPointSnapshot = RunManager.Instance.ToSave(null);
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 选路前快照记录失败: {ex.Message}");
+        }
+    }
+
     public static void ClearPreRoomSnapshot()
     {
         _preRoomSnapshot = null;
@@ -61,6 +86,7 @@ internal static class RoomEntryTracker
         _lastSnapshot = null;
         _lastRoom = null;
         _preRoomSnapshot = null;
+        _preMapPointSnapshot = null;
     }
 
     public static void RecordOnRoomEnter()

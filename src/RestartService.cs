@@ -21,18 +21,8 @@ internal static class RestartService
         NewRun
     }
 
-    /// <summary>重启流程互斥：读档/场景切换期间不允许第二个重启并发执行（快速连按/多入口同时触发）。</summary>
-    private static bool _busy;
-
     public static async Task ExecuteRestart(RestartType type)
     {
-        if (_busy)
-        {
-            Entry.Logger?.Warn($"[QuickRestart] 已有重启流程在执行中，忽略本次（type={type}）");
-            return;
-        }
-
-        _busy = true;
         try
         {
             Entry.Logger?.Info($"[QuickRestart] 执行重启 type={type}");
@@ -56,10 +46,6 @@ internal static class RestartService
         {
             Entry.Logger?.Error($"[QuickRestart] 重启失败 type={type}: {ex}");
         }
-        finally
-        {
-            _busy = false;
-        }
     }
 
     private static async Task RestartRoomAsync()
@@ -82,7 +68,7 @@ internal static class RestartService
 
         ClosePauseMenu();
 
-        // ★ 死亡拦截场景：拦截时调用了 CombatManager.Pause()，战斗回合循环卡在
+        // ★ 刀下留人场景：拦截时调用了 CombatManager.Pause()，战斗回合循环卡在
         //   `while (IsPaused && turnState.IsLive)`；不解除的话读档/退出流程永远等不到。
         EnsureCombatUnpaused();
 
@@ -121,15 +107,35 @@ internal static class RestartService
             //   再自动重进房间 —— 洗牌/怪物与首次进房完全一致（牌序相同，适合练习同一场战斗）。
             Entry.Logger?.Info("[QuickRestart] 重启房间：回滚到进房前（RNG 一并回滚，牌序将与首次进房一致）");
 
-            var game = NGame.Instance ?? throw new InvalidOperationException("NGame 实例不可用，取消重启");
-            await game.ReturnToMainMenu();
+            await NGame.Instance!.ReturnToMainMenu();
             await WaitFrames(5);
 
             var runState = RunState.FromSerializable(preSnap);
             await RunManager.Instance.SetUpSavedSingleplayer(runState, preSnap);
-            await game.LoadRun(runState, null);
+            await NGame.Instance.LoadRun(runState, null);
             await WaitFrames(5);
 
+            // ══════════════════════════════════════════════════════════════════
+            // ★ 修复：重启后商店物品/怪物/事件"刷新"（同一房间被生成了两次）
+            //   NGame.LoadRun 内部会调用 RunManager.LoadIntoLatestMapCoord —— 它依据
+            //   State.VisitedMapCoords 的最后一个坐标，自动把玩家重新送回"本房间"。
+            //   而进房前快照是在 RunManager.EnterRoom 之前捕获的，此时
+            //   AddVisitedMapCoord 已经执行过（EnterMapCoord：先记录坐标，再 EnterRoom），
+            //   所以快照里最后一个已访问坐标就是本房间 → 读档流程必然自动重进本房间，
+            //   且用的是快照里的 RNG（与首次进房完全一致）。
+            //   若此时再手动 EnterRoom，房间内容会被生成第二次 —— 第二次的 RNG
+            //   已被第一次消耗（如 PlayerRng.Shops/Rewards 的计数器），于是商店库存
+            //   凭空刷新（日志实证：同一房间被 Enter 两次，两次 "Card rarity: Rolled"
+            //   数值不同）。故：官方读档已精确重进本房间时，不再手动进房。
+            // ══════════════════════════════════════════════════════════════════
+            var restoredRoom = RunManager.Instance.DebugOnlyGetState()?.CurrentRoom;
+            if (restoredRoom != null && restoredRoom.RoomType == roomType)
+            {
+                Entry.Logger?.Info($"[QuickRestart] 重启房间完成：读档已自动重进本房间（{roomType}），跳过重复进房（内容与首次一致，商店不会刷新）");
+                return;
+            }
+
+            Entry.Logger?.Info($"[QuickRestart] 读档未自动重进本房间（当前房间={restoredRoom?.RoomType.ToString() ?? "无"}），改为手动进入");
             var roomToEnter = BuildRoom(roomType, actIndex, encounter, evt, runState);
             if (roomToEnter == null)
             {
@@ -192,37 +198,29 @@ internal static class RestartService
     /// </summary>
     private static AbstractRoom RebuildRoomInstance(AbstractRoom room, RunState state)
     {
-        try
+        switch (room)
         {
-            switch (room)
+            case CombatRoom combat:
             {
-                case CombatRoom combat:
-                {
-                    // ★ 不能复用旧战斗的 mutable Encounter：它的 _monstersWithSlots 已生成，
-                    //   里面的怪物已设过 RunRng，StartCombat → CreateCreature 会抛
-                    //   "RunRng has already been set!"（日志实证）。
-                    //   官方路径（RunManager.CreateRoom）：规范 EncounterModel.ToMutable() 出全新 mutable
-                    //   → 进房时 GenerateMonstersWithSlots 重新生成干净怪物。
-                    var canonical = ModelDb.GetByIdOrNull<EncounterModel>(combat.Encounter.Id);
-                    return new CombatRoom(canonical != null ? canonical.ToMutable() : combat.Encounter, state);
-                }
-                case TreasureRoom:
-                    return new TreasureRoom(state.CurrentActIndex);
-                case EventRoom eventRoom:
-                    // 规范事件重新触发（与官方 CreateRoom 的 Event 分支同款）
-                    return new EventRoom(eventRoom.CanonicalEvent);
-                case MerchantRoom:
-                    return new MerchantRoom();
-                case RestSiteRoom:
-                    return new RestSiteRoom();
-                default:
-                    return room;
+                // ★ 不能复用旧战斗的 mutable Encounter：它的 _monstersWithSlots 已生成，
+                //   里面的怪物已设过 RunRng，StartCombat → CreateCreature 会抛
+                //   "RunRng has already been set!"（日志实证）。
+                //   官方路径（RunManager.CreateRoom）：规范 EncounterModel.ToMutable() 出全新 mutable
+                //   → 进房时 GenerateMonstersWithSlots 重新生成干净怪物。
+                var canonical = ModelDb.GetByIdOrNull<EncounterModel>(combat.Encounter.Id);
+                return new CombatRoom(canonical != null ? canonical.ToMutable() : combat.Encounter, state);
             }
-        }
-        catch (Exception ex)
-        {
-            Entry.Logger?.Warn($"[QuickRestart] 重建房间失败，沿用原实例: {ex.Message}");
-            return room;
+            case TreasureRoom:
+                return new TreasureRoom(state.CurrentActIndex);
+            case EventRoom eventRoom:
+                // 规范事件重新触发（与官方 CreateRoom 的 Event 分支同款）
+                return new EventRoom(eventRoom.CanonicalEvent);
+            case MerchantRoom:
+                return new MerchantRoom();
+            case RestSiteRoom:
+                return new RestSiteRoom();
+            default:
+                return room;
         }
     }
 
@@ -237,7 +235,7 @@ internal static class RestartService
 
         int actIndex = state.CurrentActIndex;
 
-        // 死亡拦截等场景可能把战斗置于暂停态，先解除（无暂停时为无操作）
+        // 刀下留人等场景可能把战斗置于暂停态，先解除（无暂停时为无操作）
         EnsureCombatUnpaused();
 
         var snapshot = ActSnapshotStore.Snapshot;
@@ -262,13 +260,12 @@ internal static class RestartService
             // 官方读档流程（与主菜单"继续游戏"同一条路径，反编译确认）：
             //   ReturnToMainMenu → CleanUp（内含 State=null）→
             //   RunState.FromSerializable 重建 → SetUpSavedSingleplayer（要求 State==null）→ NGame.LoadRun
-            var game = NGame.Instance ?? throw new InvalidOperationException("NGame 实例不可用，取消重启");
-            await game.ReturnToMainMenu();
+            await NGame.Instance!.ReturnToMainMenu();
             await WaitFrames(5);
 
             var runState = RunState.FromSerializable(snapshot);
             await RunManager.Instance.SetUpSavedSingleplayer(runState, snapshot);
-            await game.LoadRun(runState, null);
+            await NGame.Instance.LoadRun(runState, null);
 
             Entry.Logger?.Info("[QuickRestart] 重启本层完成：已回滚到本幕起点");
         }
@@ -375,7 +372,7 @@ internal static class RestartService
                 modifiers.Add(canonical);
         }
 
-        // 死亡拦截等场景可能把战斗置于暂停态，先解除（无暂停时为无操作）
+        // 刀下留人等场景可能把战斗置于暂停态，先解除（无暂停时为无操作）
         EnsureCombatUnpaused();
 
         var gameMode = state.GameMode;
@@ -384,12 +381,6 @@ internal static class RestartService
         string seed = sameSeed
             ? state.Rng.StringSeed
             : SeedHelper.GetRandomSeed();
-        if (string.IsNullOrEmpty(seed))
-        {
-            // 边界防护：种子不可用（异常状态/空字符串）时回退随机种子，避免把 null 传给游戏开新局
-            Entry.Logger?.Warn("[QuickRestart] 当前种子不可用，改用随机种子");
-            seed = SeedHelper.GetRandomSeed();
-        }
 
         Entry.Logger?.Info($"[QuickRestart] 重启本局 sameSeed={sameSeed} seed={seed} character={character.Id} ascension={ascension} acts={acts.Count} modifiers={modifiers.Count}");
 
@@ -406,18 +397,16 @@ internal static class RestartService
         bool suppressed = TrySetShouldSave(false);
         Entry.Logger?.Info($"[QuickRestart] 无痕标记 ShouldSave=false → {suppressed}（prev={prevShouldSave}）");
 
-        // 新局：旧局的幕快照与房间级引用全部作废（新局 Act 0 的地图屏就绪后会重新记录）
+        // 新局：旧局的幕快照作废（新局 Act 0 的地图屏就绪后会重新记录）
         ActSnapshotStore.Reset();
-        RoomEntryTracker.Reset();
 
         try
         {
-            var game = NGame.Instance ?? throw new InvalidOperationException("NGame 实例不可用，取消重启");
-            await game.ReturnToMainMenu();
+            await NGame.Instance!.ReturnToMainMenu();
             // 场景切换留帧：回主菜单 → 开新局不能在同一帧内连续执行（否则画面停在旧场景 = 黑屏）
             await WaitFrames(5);
 
-            await game.StartNewSingleplayerRun(
+            await NGame.Instance.StartNewSingleplayerRun(
                 character, true, acts, modifiers, seed, gameMode, ascension);
 
             Entry.Logger?.Info("[QuickRestart] 重启本局完成：同种子从头开始，旧局未写入历史/未中断连胜");
@@ -434,30 +423,87 @@ internal static class RestartService
 
     public static async Task RetryCombatAsync()
     {
-        if (_busy)
-        {
-            Entry.Logger?.Warn("[QuickRestart] 已有重启流程在执行中，忽略重新挑战");
-            return;
-        }
+        Entry.Logger?.Info("[QuickRestart] 重新挑战当前战斗");
+        await RestartRoomAsync();
+    }
 
-        _busy = true;
+    /// <summary>
+    /// 刀下留人「回到地图重新挑战」：回滚到**选路前**（进入本房间之前 —— 该地图坐标尚未被标记访问），
+    /// 最终停在地图屏：血量 / 牌组 / 金币 / RNG 全部回退到进房前，玩家可重新选路，
+    /// 也可以重新进入刚才那个节点再战。
+    /// <para>与"重启房间"的区别：不自动重进房间（所以要额外退回地图屏）。</para>
+    /// </summary>
+    public static async Task RewindToMapAsync()
+    {
         try
         {
-            Entry.Logger?.Info("[QuickRestart] 重新挑战当前战斗");
-            await RestartRoomAsync();
+            var state = RunManager.Instance.DebugOnlyGetState();
+            if (state == null)
+            {
+                Entry.Logger?.Warn("[QuickRestart] 无法获取 RunState，跳过回到地图");
+                return;
+            }
+
+            var snap = RoomEntryTracker.PreMapPointSnapshot;
+            if (snap == null)
+            {
+                // 兜底（如本房间不是从地图节点进入、补丁未生效）：沿用"重启房间"
+                Entry.Logger?.Warn("[QuickRestart] 无选路前快照，回退为重启房间（回滚到进房前并自动重进）");
+                await RestartRoomAsync();
+                return;
+            }
+
+            ClosePauseMenu();
+
+            // 刀下留人场景：拦截时调用了 CombatManager.Pause()，先解除（否则读档流程会卡住）
+            EnsureCombatUnpaused();
+
+            bool prevShouldSave = RunManager.Instance.ShouldSave;
+            bool suppressed = TrySetShouldSave(false);
+            bool prevSuspended = RoomEntryTracker.Suspended;
+            RoomEntryTracker.Suspended = true;   // 读档与退回地图期间不记录新快照
+            try
+            {
+                Entry.Logger?.Info("[QuickRestart] 回到地图：回滚到选路前（进入本房间之前）");
+
+                await NGame.Instance!.ReturnToMainMenu();
+                await WaitFrames(5);
+
+                var runState = RunState.FromSerializable(snap);
+                await RunManager.Instance.SetUpSavedSingleplayer(runState, snap);
+                await NGame.Instance.LoadRun(runState, null);
+                await WaitFrames(5);
+
+                // LoadRun 内部 LoadIntoLatestMapCoord 会把玩家送回"最后一个已访问坐标"的房间（上一节点）；
+                // 这里再退回地图屏 —— 本节点在快照中尚未被标记访问，因此地图上可以重新点击它。
+                var restoredRoom = RunManager.Instance.DebugOnlyGetState()?.CurrentRoom;
+                if (restoredRoom is not MapRoom)
+                {
+                    await RunManager.Instance.EnterRoom(new MapRoom());
+                    await WaitFrames(2);
+                }
+
+                Entry.Logger?.Info("[QuickRestart] 回到地图完成：可重新选路，或重新进入本节点再战（状态已回退到进房前）");
+            }
+            catch (Exception ex)
+            {
+                if (suppressed)
+                    TrySetShouldSave(prevShouldSave);
+                Entry.Logger?.Error($"[QuickRestart] 回到地图失败: {ex}");
+            }
+            finally
+            {
+                RoomEntryTracker.Suspended = prevSuspended;
+            }
         }
         catch (Exception ex)
         {
-            Entry.Logger?.Error($"[QuickRestart] 重新挑战失败: {ex}");
-        }
-        finally
-        {
-            _busy = false;
+            Entry.Logger?.Error($"[QuickRestart] 回到地图异常: {ex}");
         }
     }
 
     /// <summary>
-    /// 解除战斗暂停。死亡拦截时会调用 CombatManager.Pause() 冻结战斗（弹窗选择期间），
+    /// 解除战斗暂停。刀下留人时会调用 CombatManager.Pause() 冻结战斗（弹窗选择期间），
     /// 解除前必须确保玩家已脱离 HP=0 状态（否则 Unpause 后死亡检测立即再次触发）。
     /// 非暂停时为无操作，可安全重复调用。
     /// </summary>

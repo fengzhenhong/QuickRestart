@@ -31,6 +31,7 @@ public static class Entry
         patcher.RegisterPatch<LoseCombatInterceptPatch>();
         patcher.RegisterPatch<RoomEnterTrackPatch>();
         patcher.RegisterPatch<PreRoomSnapshotPatch>();
+        patcher.RegisterPatch<MapPointSnapshotPatch>();
         patcher.RegisterPatch<RunInputPatch>();
         patcher.RegisterPatch<ActSnapshotPatch>();
 
