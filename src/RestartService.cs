@@ -34,6 +34,15 @@ internal static class RestartService
 
     public static async Task ExecuteRestart(RestartType type)
     {
+        // ★ 联机对局统一拒绝（兜底所有入口：快捷键 / 暂停菜单按钮 / 刀下留人弹窗 / 重挑战等）——
+        //   本地回滚在联机下必然被校验和判定为状态分歧，详见 NetGuard。
+        if (NetGuard.IsMultiplayer())
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 联机模式下不支持重启/回滚（type={type}），已忽略");
+            ModToast.Show("联机模式下不可用（回溯之镜仅支持单人）");
+            return;
+        }
+
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
         {
             Entry.Logger?.Warn($"[QuickRestart] 已有重启流程进行中，忽略本次触发 type={type}");
@@ -714,6 +723,14 @@ internal static class RestartService
     /// </summary>
     public static async Task RewindToMapAsync()
     {
+        // ★ 联机对局统一拒绝（与 ExecuteRestart 同一防线；详见 NetGuard）
+        if (NetGuard.IsMultiplayer())
+        {
+            Entry.Logger?.Warn("[QuickRestart] 联机模式下不支持回到地图（回滚），已忽略");
+            ModToast.Show("联机模式下不可用（回溯之镜仅支持单人）");
+            return;
+        }
+
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
         {
             Entry.Logger?.Warn("[QuickRestart] 已有重启流程进行中，忽略回到地图");

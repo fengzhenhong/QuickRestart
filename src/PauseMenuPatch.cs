@@ -22,6 +22,9 @@ internal sealed class PauseMenuReadyPatch : IPatchMethod
     public static void Postfix(NPauseMenu __instance)
     {
         if (!Entry.Enabled) return;
+        // ★ 联机对局不注入按钮：联机下所有回滚/重启功能均禁用（详见 NetGuard），
+        //   按钮不出现比"点了才提示不可用"更直观（点击处的守卫是第二道防线）。
+        if (NetGuard.IsMultiplayer()) return;
         try
         {
             PauseMenuButtonInjector.InjectButtons(__instance);

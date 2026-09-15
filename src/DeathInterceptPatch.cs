@@ -3,6 +3,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Context;
 using STS2RitsuLib.Patching.Core;
 using STS2RitsuLib.Patching.Models;
 
@@ -26,6 +27,11 @@ internal static class DeathInterceptCore
     {
         if (!Entry.Enabled) return false;
         if (!SettingsManager.Current.EnableDeathIntercept) return false;
+
+        // ★ 联机对局不拦截：① 本地回滚在联机下必然被校验和判定为状态分歧（详见 NetGuard）；
+        //   ② 队友死亡与本地玩家无关（不应弹"刀下留人"）—— 联机下让游戏按官方流程处理。
+        //   玩家反馈（2026-09-15）：联机模式下队友死亡也会触发刀下留人。
+        if (NetGuard.IsMultiplayer()) return false;
 
         try
         {
@@ -52,7 +58,9 @@ internal static class DeathInterceptCore
             var state = RunManager.Instance.DebugOnlyGetState();
             if (state == null) return false;
 
-            var localPlayer = state.Players.FirstOrDefault();
+            // ★ 本地玩家（而非"玩家列表第一个"）：联机/多玩家存档下列表含其他玩家，取第一个会把
+            //   队友的死亡误判为"自己受到致命伤害"。LocalContext.GetMe 返回本地玩家；异常场景退回第一个。
+            var localPlayer = LocalContext.GetMe(state) ?? state.Players.FirstOrDefault();
             if (localPlayer == null) return false;
 
             if (localPlayer.Creature.CurrentHp > 0) return false;

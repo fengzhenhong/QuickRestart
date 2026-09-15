@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Runs;
 using STS2RitsuLib.Patching.Core;
 using STS2RitsuLib.Patching.Models;
@@ -37,6 +38,11 @@ internal sealed class RunInputPatch : IPatchMethod
         if (!Entry.Enabled) return;
         if (inputEvent is not InputEventKey { Pressed: true, Echo: false } key) return;
 
+        // ★ 控制台打开时不响应（玩家在控制台里打字，如输入含 r/f/t/n 的命令会误触发重启）。
+        //   游戏自身的输入处理（NHotkeyManager 等）统一用同一守卫；IsConsoleVisible 在控制台
+        //   尚未创建时也安全（返回 false）。—— 玩家反馈修复，2026-09-15
+        if (NDevConsole.IsConsoleVisible) return;
+
         // 快捷键设置面板：捕获/拦截按键（面板打开时由它决定是否消费）
         if (KeyBindPanel.IsOpen && KeyBindPanel.HandleKey(key)) return;
 
@@ -69,6 +75,14 @@ internal sealed class RunInputPatch : IPatchMethod
         }
 
         if (action == null || restartType == null) return;
+
+        // ★ 联机对局：回滚/重启类功能不可用（本地回滚会被校验和判定为状态分歧，详见 NetGuard）。
+        //   在此明确提示，避免玩家点了确认框才发现不可用。
+        if (NetGuard.IsMultiplayer())
+        {
+            ModToast.Show("联机模式下不可用（回溯之镜仅支持单人）");
+            return;
+        }
 
         // 不再要求暂停菜单打开 —— 战斗中直接可用；仍要求存在进行中的 run。
         if (RunManager.Instance.DebugOnlyGetState() == null) return;
