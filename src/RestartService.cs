@@ -115,7 +115,8 @@ internal static class RestartService
         //   回滚后走"重新进入本节点"会重演这次 roll、用的正是同一份 RNG → 问号房内容与首次完全一致。
         //   ⚠️ 旧实现用 EnterRoom 前缀快照（= roll 之后的状态）→ 重启时触发二次 roll → 问号房内容会变化。
         var preSnap = RoomEntryTracker.PreMapPointSnapshot;
-        if (preSnap == null || !RoomEntryTracker.IsSnapshotForCurrentRun(preSnap))
+        if (preSnap == null
+            || !RoomEntryTracker.IsSnapshotForCurrentRun(preSnap, RoomEntryTracker.PreMapPointRunStart, "重启房间"))
         {
             // 兜底（快照缺失，或属于上一局——玩家用游戏自带流程开新局时旧快照残留）：
             // 新建房间重进 —— 牌序会重新随机
@@ -303,7 +304,7 @@ internal static class RestartService
 
         // 快照缺失/不属于当前幕/属于上一局（跨局残留）→ 回退旧行为：仅重进本幕（不回滚物品）
         if (snapshot == null || ActSnapshotStore.SnapshotActIndex != actIndex
-            || !RoomEntryTracker.IsSnapshotForCurrentRun(snapshot))
+            || !RoomEntryTracker.IsSnapshotForCurrentRun(snapshot, ActSnapshotStore.SnapshotRunStart, "重启本层"))
         {
             Entry.Logger?.Warn($"[QuickRestart] 无第 {actIndex + 1} 幕起点快照（缺失/非本幕/属于上一局），回退为仅重进本幕");
             ClosePauseMenu();
@@ -311,7 +312,13 @@ internal static class RestartService
             return;
         }
 
-        Entry.Logger?.Info($"[QuickRestart] 重启本层：回滚到第 {actIndex + 1} 幕起点（本幕获得的金币/卡牌/遗物/药水/血量将全部回退）");
+        if (ActSnapshotStore.SnapshotFromResume)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 注意：本幕快照来自**读档恢复点**（本次会话直接读档继续、未经历真实幕初）—— 重启本层将回滚到「读档时」的状态，而不是本幕开场");
+            // 如实告知玩家（游戏存档里没有"本幕开场"数据，读档进入的当幕无法回滚到幕初，只能到读档点）
+            RestartOverlay.SetNote("本幕快照来自读档点：只能回到「读档时」的状态（游戏未保存本幕开场数据）");
+        }
+        Entry.Logger?.Info($"[QuickRestart] 重启本层：回滚到第 {actIndex + 1} 幕快照点（本幕获得的金币/卡牌/遗物/药水/血量将全部回退）");
         ClosePauseMenu();
 
         bool prevShouldSave = RunManager.Instance.ShouldSave;
@@ -370,7 +377,25 @@ internal static class RestartService
 
             // ③ 等帧优化：LoadRun 已完成场景切换与房间自动重进，2 帧确认即可
             await WaitFrames(2);
-            Entry.Logger?.Info($"[QuickRestart] 重启本层完成：已回滚到本幕起点 · 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
+
+            // 落点兜底：本层快照回滚后应停在地图屏（本幕起点只能从地图继续）；异常落点强制退回，
+            // 并记录实际落点 —— 旧版此处无日志，"按了没回去"无从判断（2026-09-15 玩家反馈）。
+            try
+            {
+                var restoredRoom = RunManager.Instance.DebugOnlyGetState()?.CurrentRoom;
+                if (restoredRoom is not MapRoom)
+                {
+                    Entry.Logger?.Warn($"[QuickRestart] 重启本层：落点异常（{restoredRoom?.RoomType.ToString() ?? "无"}），强制退回地图屏");
+                    await RunManager.Instance.EnterRoom(new MapRoom());
+                    await WaitFrames(2);
+                }
+            }
+            catch (Exception ex)
+            {
+                Entry.Logger?.Warn($"[QuickRestart] 重启本层：落点检查/退回地图屏失败: {ex.Message}");
+            }
+
+            Entry.Logger?.Info($"[QuickRestart] 重启本层完成：已回滚到第 {actIndex + 1} 幕快照点、落点=地图屏 · 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）{(ActSnapshotStore.SnapshotFromResume ? " ⚠ 快照=读档点（非真实幕初）" : "")}");
         }
         catch (Exception ex)
         {
@@ -718,7 +743,8 @@ internal static class RestartService
             }
 
             var snap = RoomEntryTracker.PreMapPointSnapshot;
-            if (snap == null || !RoomEntryTracker.IsSnapshotForCurrentRun(snap))
+            if (snap == null
+                || !RoomEntryTracker.IsSnapshotForCurrentRun(snap, RoomEntryTracker.PreMapPointRunStart, "回到地图"))
             {
                 // 兜底（快照缺失或属于上一局；如本房间不是从地图节点进入、补丁未生效）：沿用"重启房间"
                 Entry.Logger?.Warn("[QuickRestart] 无可用选路前快照（缺失或属于上一局），回退为重启房间（回滚到进房前并自动重进）");

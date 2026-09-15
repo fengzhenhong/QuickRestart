@@ -21,5 +21,7 @@ internal sealed class ActSnapshotPatch : IPatchMethod
     {
         if (!Entry.Enabled) return;
         ActSnapshotStore.CaptureIfNeeded();   // 内部已 try-catch，绝不干扰游戏流程
+        // 读档继续游戏时本次会话没有"点节点"记录 → 顺带补记"选路前"兜底快照（缺了才补，不覆盖正常快照）
+        RoomEntryTracker.EnsurePreMapPointSnapshot();
     }
 }
