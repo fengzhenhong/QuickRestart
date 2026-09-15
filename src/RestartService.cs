@@ -110,7 +110,11 @@ internal static class RestartService
             evt = ModelDb.GetByIdOrNull<EventModel>(eventRoom.CanonicalEvent.Id);
         }
 
-        var preSnap = RoomEntryTracker.PreRoomSnapshot;
+        // ★ 用「点击节点前」快照（PreMapPointSnapshot，捕获于 EnterMapCoord/AddVisitedMapCoord 之前）：
+        //   此时房间类型**尚未 roll**（问号节点的类型由 Odds.UnknownMapPoint.Roll 决定并消耗 RNG）。
+        //   回滚后走"重新进入本节点"会重演这次 roll、用的正是同一份 RNG → 问号房内容与首次完全一致。
+        //   ⚠️ 旧实现用 EnterRoom 前缀快照（= roll 之后的状态）→ 重启时触发二次 roll → 问号房内容会变化。
+        var preSnap = RoomEntryTracker.PreMapPointSnapshot;
         if (preSnap == null || !RoomEntryTracker.IsSnapshotForCurrentRun(preSnap))
         {
             // 兜底（快照缺失，或属于上一局——玩家用游戏自带流程开新局时旧快照残留）：
