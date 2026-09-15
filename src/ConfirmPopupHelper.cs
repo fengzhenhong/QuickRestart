@@ -91,12 +91,14 @@ internal static class ConfirmPopupHelper
             vp.SetText("刀下留人", "生命归零！\n【确认】回到地图重新挑战（进本房间前）\n【取消】放弃本局（同一种子从头重开）");
             vp.InitYesButton(new LocString("main_menu_ui", "GENERIC_POPUP.confirm"), _ =>
             {
+                _deathPopup = null;   // 弹窗已作出选择：不再持有引用（避免静态字段长期持有已释放节点）
                 Entry.Logger?.Info("[QuickRestart] 刀下留人弹窗：点击【确认=回到地图重新挑战】");
                 try { onRetry(); }
                 catch (Exception ex) { Entry.Logger?.Error($"[QuickRestart] 回到地图失败: {ex}"); }
             });
             vp.InitNoButton(_cancelLoc, _ =>
             {
+                _deathPopup = null;   // 同上：作出选择即释放引用
                 Entry.Logger?.Info("[QuickRestart] 刀下留人弹窗：点击【取消=放弃本局（同种子重开）】");
                 try { onAbandon(); }
                 catch (Exception ex) { Entry.Logger?.Error($"[QuickRestart] 放弃本局失败: {ex}"); }

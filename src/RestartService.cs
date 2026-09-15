@@ -111,9 +111,17 @@ internal static class RestartService
             // 兜底（快照缺失，或属于上一局——玩家用游戏自带流程开新局时旧快照残留）：
             // 新建房间重进 —— 牌序会重新随机
             Entry.Logger?.Warn("[QuickRestart] 无可用进房前快照（缺失或属于上一局），回退为新建房间重进（牌序会重新随机）");
-            RoomEntryTracker.RestorePreRoomState();
-            await RunManager.Instance.EnterRoom(RebuildRoomInstance(room, state));
-            Entry.Logger?.Info("[QuickRestart] 重启房间完成（回退路径）");
+            try
+            {
+                RoomEntryTracker.RestorePreRoomState();
+                await RunManager.Instance.EnterRoom(RebuildRoomInstance(room, state));
+                Entry.Logger?.Info("[QuickRestart] 重启房间完成（回退路径）");
+            }
+            catch (Exception ex)
+            {
+                // 本兜底路径此前无 try（经"重新挑战"按钮进入时异常会变成未观察任务异常）
+                Entry.Logger?.Error($"[QuickRestart] 重启房间失败（回退路径）: {ex}");
+            }
             return;
         }
 
@@ -139,8 +147,15 @@ internal static class RestartService
                     // 反序列化与淡出并行：FromSerializable 是纯 CPU 构建（不碰 RunManager 状态），
                     // 放在淡出动画推进期间执行，等于把它藏进 0.22s 黑幕里（省 10~100ms 黑屏）。
                     var fadeTask = NGame.Instance!.Transition.FadeOut(DirectFadeSec);
-                    runState = RunState.FromSerializable(preSnap);
-                    await fadeTask;
+                    try
+                    {
+                        runState = RunState.FromSerializable(preSnap);
+                    }
+                    finally
+                    {
+                        // 反序列化失败也不留孤儿淡出任务（详见 AwaitFadeSafeAsync 注释）
+                        await AwaitFadeSafeAsync(fadeTask, "重启房间");
+                    }
                     LogStep("重启房间", t0, "FadeOut");
                     RunManager.Instance.CleanUp();
                     LogStep("重启房间", t0, "CleanUp");
@@ -327,8 +342,15 @@ internal static class RestartService
                 {
                     // 反序列化与淡出并行（同"重启房间"）
                     var fadeTask = NGame.Instance!.Transition.FadeOut(DirectFadeSec);
-                    var runStateDirect = RunState.FromSerializable(snapshot);
-                    await fadeTask;
+                    RunState runStateDirect;
+                    try
+                    {
+                        runStateDirect = RunState.FromSerializable(snapshot);
+                    }
+                    finally
+                    {
+                        await AwaitFadeSafeAsync(fadeTask, "重启本层");
+                    }
                     LogStep("重启本层", t0, "FadeOut");
                     RunManager.Instance.CleanUp();
                     LogStep("重启本层", t0, "CleanUp");
@@ -392,6 +414,22 @@ internal static class RestartService
         {
             Entry.Logger?.Warn($"[QuickRestart] 设置 ShouldSave={value} 失败: {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// 等待淡出任务完成并观察其异常（绝不抛出）—— 防止孤儿任务停留在后台，
+    /// 与回退路径的转场调用并发操作同一 NTransition 节点（阈值/MouseFilter 互相覆盖）。
+    /// </summary>
+    private static async Task AwaitFadeSafeAsync(Task fadeTask, string tag)
+    {
+        try
+        {
+            await fadeTask;
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 转场淡出等待异常（{tag}）: {ex.Message}");
         }
     }
 
@@ -586,6 +624,11 @@ internal static class RestartService
             Entry.Logger?.Info("[QuickRestart] 重新挑战当前战斗");
             await RestartRoomAsync();
         }
+        catch (Exception ex)
+        {
+            // 补齐兜底：本方法由按钮回调 fire-and-forget 调用，异常若逃逸会成为未观察任务异常
+            Entry.Logger?.Error($"[QuickRestart] 重新挑战失败: {ex}");
+        }
         finally
         {
             RestartOverlay.Hide();
@@ -660,8 +703,15 @@ internal static class RestartService
                     {
                         // 反序列化与淡出并行（同"重启房间"）
                         var fadeTask = NGame.Instance!.Transition.FadeOut(DirectFadeSec);
-                        var runStateDirect = RunState.FromSerializable(snap);
-                        await fadeTask;
+                        RunState runStateDirect;
+                        try
+                        {
+                            runStateDirect = RunState.FromSerializable(snap);
+                        }
+                        finally
+                        {
+                            await AwaitFadeSafeAsync(fadeTask, "回到地图");
+                        }
                         LogStep("回到地图", t0, "FadeOut");
                         RunManager.Instance.CleanUp();
                         LogStep("回到地图", t0, "CleanUp");

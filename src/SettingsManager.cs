@@ -81,8 +81,24 @@ public static class SettingsManager
 
             // 原子写：先写临时文件再替换 —— 避免写入中途中断导致 settings.json 损坏
             string tmpPath = SettingsPath + ".tmp";
-            File.WriteAllText(tmpPath, json);
-            File.Move(tmpPath, SettingsPath, overwrite: true);
+            try
+            {
+                File.WriteAllText(tmpPath, json);
+                File.Move(tmpPath, SettingsPath, overwrite: true);
+            }
+            finally
+            {
+                // 失败路径清理临时文件（Move 成功后该文件已不存在，此处为幂等无操作）
+                try
+                {
+                    if (File.Exists(tmpPath))
+                        File.Delete(tmpPath);
+                }
+                catch
+                {
+                    // 清理失败不致命（下次 Save 会覆盖）
+                }
+            }
         }
         catch (Exception ex)
         {

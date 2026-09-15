@@ -28,7 +28,11 @@ internal static class RestartOverlay
                 || _rect == null || !GodotObject.IsInstanceValid(_rect))
             {
                 KillTween();
-                _layer?.QueueFree();
+                // 注意：Godot 已释放的对象调用任何方法都会抛 ObjectDisposedException —— 必须先验证
+                if (_layer != null && GodotObject.IsInstanceValid(_layer))
+                {
+                    _layer.QueueFree();
+                }
                 _layer = new CanvasLayer { Layer = 100, Name = "QR_RestartOverlay" };
                 _rect = new ColorRect
                 {
