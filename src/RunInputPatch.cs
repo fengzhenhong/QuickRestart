@@ -70,14 +70,22 @@ internal sealed class RunInputPatch : IPatchMethod
 
         if (action == null || restartType == null) return;
 
-        // 修复（用户实测反馈：战斗中按 R 无效）：不再要求暂停菜单打开 —— 战斗中直接可用；
-        // 防误触由确认弹窗承担（ShowConfirmationDialog=true 时）；仍要求存在进行中的 run。
+        // 不再要求暂停菜单打开 —— 战斗中直接可用；仍要求存在进行中的 run。
         if (RunManager.Instance.DebugOnlyGetState() == null) return;
 
         _lastTriggerTime = now;
         Entry.Logger?.Info($"[QuickRestart] 快捷键触发 {action}");
 
         var type = restartType.Value;
+
+        // ★ 重启房间免确认（用户要求）：练习场景高频连按，直接执行；
+        //   防误触改由 0.5s 冷却承担。重启本层/本局/新局仍弹确认框。
+        if (type == RestartService.RestartType.RestartRoom)
+        {
+            _ = RestartService.ExecuteRestart(type);
+            return;
+        }
+
         ConfirmPopupHelper.ShowConfirm(action, $"确认{action}？",
             () => _ = RestartService.ExecuteRestart(type));
     }

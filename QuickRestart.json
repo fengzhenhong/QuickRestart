@@ -3,7 +3,7 @@
   "name": "回溯之镜",
   "author": "CodeArts",
   "description": "练习与救场体验：暂停菜单四大重启按钮、战后重新挑战、刀下留人。",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "has_pck": false,
   "has_dll": true,
   "affects_gameplay": false,
