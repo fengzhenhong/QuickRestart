@@ -10,7 +10,10 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
 
     <RootNamespace>QuickRestart</RootNamespace>
-    <Version>0.1.3</Version>
+    <!-- 与 QuickRestart.json 的 version、Entry.ModVersion 三处保持一致。
+         ⚠️ 本工程 GenerateAssemblyInfo=false（不生成程序集版本特性），所以这个 Version 只影响
+         MSBuild 产物元数据、运行期读不到 —— 日志里的版本号必须用 Entry.ModVersion。 -->
+    <Version>0.1.6</Version>
     <NoWarn>$(NoWarn);CS0436</NoWarn>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>

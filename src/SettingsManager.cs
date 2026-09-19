@@ -5,14 +5,17 @@ namespace QuickRestart;
 
 public sealed class QuickRestartSettings
 {
+    // 四个重启快捷键（可在游戏内"快捷键设置"里改）。
+    // ⚠️ 不要再往这里加"没有读取点的开关/键位"：老版本曾有 RetryCombatKey（战后重新挑战快捷键）
+    //    和 EnableWinStreakProtection（预留）两个字段，前者从未被任何输入处理读取、后者无实现，
+    //    但它们会出现在玩家可编辑的 settings.json 里 —— 玩家照着改自然"没反应"。
+    //    要加字段请同时接上读取点，并在 README 的功能说明里写清效果。
     public string RestartRoomKey { get; set; } = "R";
     public string RestartFloorKey { get; set; } = "F";
     public string RestartRunKey { get; set; } = "T";
     public string NewRunKey { get; set; } = "N";
-    public string RetryCombatKey { get; set; } = "R";
 
     public bool EnableDeathIntercept { get; set; } = true;
-    public bool EnableWinStreakProtection { get; set; } = false;
     public bool EnablePostCombatRetry { get; set; } = true;
     public bool ShowConfirmationDialog { get; set; } = true;
 
@@ -65,7 +68,6 @@ public static class SettingsManager
         if (string.IsNullOrEmpty(s.RestartFloorKey)) s.RestartFloorKey = "F";
         if (string.IsNullOrEmpty(s.RestartRunKey)) s.RestartRunKey = "T";
         if (string.IsNullOrEmpty(s.NewRunKey)) s.NewRunKey = "N";
-        if (string.IsNullOrEmpty(s.RetryCombatKey)) s.RetryCombatKey = "R";
     }
 
     public static void Save()

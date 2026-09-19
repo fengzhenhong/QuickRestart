@@ -55,6 +55,25 @@ internal static class ModToast
         }
     }
 
+    /// <summary>彻底移除提示层（Mod 被停用时调用，避免留下常驻 CanvasLayer）。</summary>
+    public static void Shutdown()
+    {
+        try
+        {
+            if (_tween != null && _tween.IsValid())
+                _tween.Kill();
+            _tween = null;
+            if (_layer != null && GodotObject.IsInstanceValid(_layer))
+                _layer.QueueFree();
+            _layer = null;
+            _label = null;
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 屏幕提示卸载失败: {ex.Message}");
+        }
+    }
+
     private static bool EnsureBuilt()
     {
         if (Engine.GetMainLoop() is not SceneTree tree)

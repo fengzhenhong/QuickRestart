@@ -62,10 +62,12 @@ internal static class ActSnapshotPersistence
     }
 
     /// <summary>
-    /// 读回磁盘上的幕初快照。必须同时满足：局标识（StartTime）与幕号均匹配 —— 防止跨局/跨幕误用；
-    /// 旧局残留顺带清理（不占空间）。任何异常都按"无快照"处理。
+    /// 读回磁盘上的幕初快照。**局标识必须双方可用且相等**（任一为 0 即拒绝）+ 幕号一致 ——
+    /// 防止把别的局的快照当本局幕初用（那会把当前局回滚成另一局的卡组/金币/遗物）；
+    /// 种子作为第二道判据（两边都取得到且不同 → 拒绝）。旧局残留顺带清理（不占空间）。
+    /// 任何异常都按"无快照"处理。
     /// </summary>
-    public static SerializableRun? TryLoad(long currentRunStart, int currentActIndex)
+    public static SerializableRun? TryLoad(long currentRunStart, int currentActIndex, string? currentSeed)
     {
         try
         {
@@ -81,7 +83,18 @@ internal static class ActSnapshotPersistence
                 return null;
             }
 
-            if (currentRunStart != 0 && snap.StartTime != 0 && snap.StartTime != currentRunStart)
+            // ⚠️ 局标识不可用时**绝不**采用磁盘快照：`StartTime` 取自 RunManager._startTime 反射，
+            //    该字段一旦被游戏重命名/改类型就会恒为 0（v0.1.4 前真实发生过）。此时若只比幕号，
+            //    上一局同幕号的快照会被当成本局幕初 → 重启本层把当前局改成另一局的状态。
+            //    宁可降级为"只能回到读档点"（功能变弱但绝不会改错状态）。
+            if (currentRunStart == 0 || snap.StartTime == 0)
+            {
+                Entry.Logger?.Warn(
+                    $"[QuickRestart] 局标识不可用（当前={currentRunStart}，磁盘快照={snap.StartTime}），"
+                    + "拒绝采用磁盘幕初快照（重启本层最多回到当前状态）");
+                return null;
+            }
+            if (snap.StartTime != currentRunStart)
             {
                 Entry.Logger?.Info($"[QuickRestart] 磁盘幕初快照属于上一局（快照局起始={snap.StartTime}，当前={currentRunStart}），已清理");
                 Delete();
@@ -90,6 +103,14 @@ internal static class ActSnapshotPersistence
             if (snap.CurrentActIndex != currentActIndex)
             {
                 Entry.Logger?.Info($"[QuickRestart] 磁盘幕初快照为第 {snap.CurrentActIndex + 1} 幕（当前第 {currentActIndex + 1} 幕），忽略");
+                return null;
+            }
+
+            string? snapSeed = snap.SerializableRng?.Seed;
+            if (!string.IsNullOrEmpty(snapSeed) && !string.IsNullOrEmpty(currentSeed) && snapSeed != currentSeed)
+            {
+                Entry.Logger?.Warn($"[QuickRestart] 磁盘幕初快照种子与当前局不符（快照={snapSeed}，当前={currentSeed}），已清理");
+                Delete();
                 return null;
             }
 

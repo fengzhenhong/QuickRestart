@@ -25,23 +25,47 @@ internal static class RestartService
     }
 
     /// <summary>直接路径黑幕动画时长（秒）。NGame.Transition.FadeOut/FadeIn 默认各 0.8s —— 合计 1.6s 纯动画；
-    /// 直接路径改成短动画（0.3s）显著缩短黑屏，观感仍平滑。想更慢/更快只调这一个常量。</summary>
+    /// 直接路径改成 0.22s 显著缩短黑屏，观感仍平滑。想更慢/更快只调这一个常量。</summary>
     private const float DirectFadeSec = 0.22f;
 
     /// <summary>0=空闲 1=重启进行中。一次重启要跨多帧（回主菜单→等帧→读档，耗时数秒），
     /// 期间快捷键仍可触发 —— 无重入保护会让两条流程交错（场景切换/读档互相踩），黑屏或状态错乱。</summary>
     private static int _busy;
 
-    public static async Task ExecuteRestart(RestartType type)
+    /// <summary>
+    /// 「回滚 / 读档 / 重启」类功能的统一模式守卫（所有入口共用：快捷键、暂停菜单按钮、
+    /// 刀下留人弹窗回调、战后重新挑战）。命中时已给出屏幕提示，调用方直接 return。
+    /// <para>⚠️ 这是**每个入口都必须调**的防线，不能只靠"联机下不注入按钮"——
+    /// 按钮注入点与执行点之间的任何一条旁路（如重新挑战按钮、弹窗回调）都会绕过它。</para>
+    /// </summary>
+    /// <param name="allowDaily">
+    /// 每日挑战局是否放行。<c>false</c>=整族"重启"（房间/本层/本局/新局/战后重挑战）一律拒绝 ——
+    /// 重开一局拿不到每日结算依据（<c>DailyTime</c> 不在对局状态里），也等于无限重 roll 每日种子。
+    /// <c>true</c>=允许"回到地图"这类**原地回滚**（刀下留人的出路之一，用户明确要求每日局保留救场）。
+    /// </param>
+    internal static bool IsBlockedByMode(string what, bool allowDaily = false)
     {
-        // ★ 联机对局统一拒绝（兜底所有入口：快捷键 / 暂停菜单按钮 / 刀下留人弹窗 / 重挑战等）——
-        //   本地回滚在联机下必然被校验和判定为状态分歧，详见 NetGuard。
+        // 联机：本地回滚必然被校验和判定为状态分歧（详见 NetGuard）
         if (NetGuard.IsMultiplayer())
         {
-            Entry.Logger?.Warn($"[QuickRestart] 联机模式下不支持重启/回滚（type={type}），已忽略");
-            ModToast.Show("联机模式下不可用（回溯之镜仅支持单人）");
-            return;
+            Entry.Logger?.Warn($"[QuickRestart] 联机模式下不支持{what}，已忽略");
+            ModToast.Show($"联机模式下不可用（{Entry.ModName}仅支持单人）");
+            return true;
         }
+        // 每日挑战：重开类操作拒绝（详见 NetGuard.IsDailyRun）
+        if (!allowDaily && NetGuard.IsDailyRun())
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 每日挑战局不支持{what}，已忽略");
+            ModToast.Show($"每日挑战局不支持{what}");
+            return true;
+        }
+        return false;
+    }
+
+    public static async Task ExecuteRestart(RestartType type)
+    {
+        if (IsBlockedByMode("重启/回滚"))
+            return;
 
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
         {
@@ -103,21 +127,9 @@ internal static class RestartService
         //   `while (IsPaused && turnState.IsLive)`；不解除的话读档/退出流程永远等不到。
         EnsureCombatUnpaused();
 
-        // 重建蓝图：必须在回滚前提取（旧 run 的对象引用在清理后不可靠）
         RoomType roomType = room.RoomType;
-        int actIndex = state.CurrentActIndex;
         // 本房间的地图坐标：回滚后用它"重新进入本节点"（等价于第一次点击该节点）
         MapCoord? roomCoord = state.CurrentMapCoord;
-        EncounterModel? encounter = null;
-        EventModel? evt = null;
-        if (room is CombatRoom combatRoom)
-        {
-            encounter = ModelDb.GetByIdOrNull<EncounterModel>(combatRoom.Encounter.Id);
-        }
-        else if (room is EventRoom eventRoom)
-        {
-            evt = ModelDb.GetByIdOrNull<EventModel>(eventRoom.CanonicalEvent.Id);
-        }
 
         // ★ 用「点击节点前」快照（PreMapPointSnapshot，捕获于 EnterMapCoord/AddVisitedMapCoord 之前）：
         //   此时房间类型**尚未 roll**（问号节点的类型由 Odds.UnknownMapPoint.Roll 决定并消耗 RNG）。
@@ -128,11 +140,11 @@ internal static class RestartService
             || !RoomEntryTracker.IsSnapshotForCurrentRun(preSnap, RoomEntryTracker.PreMapPointRunStart, "重启房间"))
         {
             // 兜底（快照缺失，或属于上一局——玩家用游戏自带流程开新局时旧快照残留）：
-            // 新建房间重进 —— 牌序会重新随机
-            Entry.Logger?.Warn("[QuickRestart] 无可用进房前快照（缺失或属于上一局），回退为新建房间重进（牌序会重新随机）");
+            // 新建房间重进 —— 只回退血量，牌序会重新随机
+            Entry.Logger?.Warn("[QuickRestart] 无可用进房前快照（缺失或属于上一局），回退为新建房间重进（仅回退血量、牌序重新随机）");
             try
             {
-                RoomEntryTracker.RestorePreRoomState();
+                RoomEntryTracker.RestorePreRoomHp();
                 await RunManager.Instance.EnterRoom(RebuildRoomInstance(room, state));
                 Entry.Logger?.Info("[QuickRestart] 重启房间完成（回退路径）");
             }
@@ -230,40 +242,6 @@ internal static class RestartService
     }
 
     /// <summary>
-    /// 按蓝图构造全新房间（回滚完成后调用，runState 为回滚出的新 RunState）。
-    /// 路径与游戏 <c>RunManager.CreateRoom</c> 官方实现一致。
-    /// </summary>
-    private static AbstractRoom? BuildRoom(RoomType roomType, int actIndex, EncounterModel? encounter, EventModel? evt, RunState runState)
-    {
-        try
-        {
-            switch (roomType)
-            {
-                case RoomType.Monster:
-                case RoomType.Elite:
-                case RoomType.Boss:
-                    // 规范遭遇克隆出全新 mutable（怪物重新生成，RunRng 重新设置）
-                    return encounter != null ? new CombatRoom(encounter.ToMutable(), runState) : null;
-                case RoomType.Treasure:
-                    return new TreasureRoom(actIndex);
-                case RoomType.Shop:
-                    return new MerchantRoom();
-                case RoomType.RestSite:
-                    return new RestSiteRoom();
-                case RoomType.Event:
-                    return evt != null ? new EventRoom(evt) : null;
-                default:
-                    return null;
-            }
-        }
-        catch (Exception ex)
-        {
-            Entry.Logger?.Warn($"[QuickRestart] 重建房间失败: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>
     /// 构造与当前房间等价的全新实例（清空战斗/宝箱/事件的可变状态）；不支持的房间类型原样返回（沿用旧行为）。
     /// 路径与游戏 <c>RunManager.CreateRoom</c> 官方实现保持一致。
     /// </summary>
@@ -332,6 +310,11 @@ internal static class RestartService
 
         bool prevShouldSave = RunManager.Instance.ShouldSave;
         bool suppressed = TrySetShouldSave(false);
+        // 与"重启房间/回到地图"一致：回滚期间暂停快照记录。
+        // 目前 GenerateMap→SetMap 的补记路径靠"同局同幕"判据恰好不会写坏东西，但那种正确性
+        // 依赖字段相等（_startTime 一旦取不到就破防），显式暂停才可靠。
+        bool prevSuspended = RoomEntryTracker.Suspended;
+        RoomEntryTracker.Suspended = true;
 
         try
         {
@@ -412,6 +395,10 @@ internal static class RestartService
                 TrySetShouldSave(prevShouldSave);
             Entry.Logger?.Error($"[QuickRestart] 重启本层失败: {ex}");
         }
+        finally
+        {
+            RoomEntryTracker.Suspended = prevSuspended;
+        }
     }
 
     /// <summary>
@@ -454,11 +441,64 @@ internal static class RestartService
     /// </summary>
     private static async Task RestoreRunSceneAsync(RunState runState)
     {
+        // 官方 NGame.LoadMainMenu 在切场景前会先等"进行中的存档写入"完成
+        //（日志原话："Saving in progress, waiting for it to be finished before loading the main menu"）。
+        // 直接路径跳过了主菜单，这道等待必须自己补 —— 否则切场景/换 run 会与游戏正在写的
+        // current_run.save 并发（CleanUp 已把 State 置空，在途任务的后续步骤可能读到空状态）。
+        await WaitForPendingSaveAsync();
+
         await PreloadManager.LoadRunAssets(runState.Players.Select(p => p.Character));
         await PreloadManager.LoadActAssets(runState.Act);
         RunManager.Instance.Launch();
         NGame.Instance!.RootSceneContainer.SetCurrentScene(NRun.Create(runState));
         await RunManager.Instance.GenerateMap();
+
+        // 官方 LoadRun 的收尾一步（GenerateMap 里 SetMap(clearDrawings:true) 会清空涂鸦，之后才回填）。
+        // 漏了它 = 每次回滚都把玩家在地图上的手绘标记弄丢，且 MapDrawingsToLoad 一直挂在实例上没人消费。
+        LoadMapDrawings();
+    }
+
+    /// <summary>等游戏自己那笔在途的对局存档写完（失败/超时都不拦流程，只记日志）。</summary>
+    private static async Task WaitForPendingSaveAsync()
+    {
+        try
+        {
+            Task? pending = SaveManager.Instance?.CurrentRunSaveTask;
+            if (pending == null)
+                return;
+            Entry.Logger?.Info($"[QuickRestart] 读档恢复场景：等待进行中的存档写入完成后再切场景");
+            await pending;
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 读档恢复场景：等待存档任务异常（继续流程）: {ex.Message}");
+        }
+    }
+
+    /// <summary>回填存档里的地图手绘标记（与官方 NGame.LoadRun 同一处理）。</summary>
+    private static void LoadMapDrawings()
+    {
+        try
+        {
+            var drawings = RunManager.Instance.MapDrawingsToLoad;
+            if (drawings == null)
+                return;
+            RunManager.Instance.MapDrawingsToLoad = null;   // 先摘走：别让下一次官方读档再消费一遍
+
+            var mapScreen = NRun.Instance?.GlobalUi?.MapScreen;
+            var drawingsNode = mapScreen?.Drawings;
+            if (drawingsNode == null)
+            {
+                Entry.Logger?.Warn("[QuickRestart] 读档恢复场景：地图屏未就绪，本次无法恢复地图手绘标记");
+                return;
+            }
+            drawingsNode.LoadDrawings(drawings);
+            Entry.Logger?.Info("[QuickRestart] 读档恢复场景：已恢复地图手绘标记");
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 读档恢复场景：恢复地图手绘标记失败（不影响回滚）: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -614,9 +654,17 @@ internal static class RestartService
         var gameMode = state.GameMode;
         int ascension = state.AscensionLevel;
 
-        string seed = sameSeed
-            ? state.Rng.StringSeed
-            : SeedHelper.GetRandomSeed();
+        string? sameRunSeed = sameSeed ? state.Rng.StringSeed : null;
+        if (sameSeed && string.IsNullOrEmpty(sameRunSeed))
+        {
+            // ⚠️ RunRngSet.StringSeed 在部分路径下为空（同 RoomEntryTracker 里跨局判据踩过的坑）：
+            //   此时"同种子重开"无从谈起，用新随机种子顶上并如实告知，别把空串当种子传给新局。
+            Entry.Logger?.Warn("[QuickRestart] 当前局种子为空，无法同种子重开 → 本次改用新随机种子");
+            ModToast.Show("未能取到本局种子，已改用新种子开局");
+            sameRunSeed = null;
+        }
+
+        string seed = sameRunSeed ?? SeedHelper.GetRandomSeed();
 
         Entry.Logger?.Info($"[QuickRestart] 重启本局 sameSeed={sameSeed} seed={seed} character={character.Id} ascension={ascension} acts={acts.Count} modifiers={modifiers.Count}");
 
@@ -624,17 +672,32 @@ internal static class RestartService
 
         // ══════════════════════════════════════════════════════════════════
         // 无痕重启（用户要求）：旧局不得写入 run 历史、不得中断连胜、不记成就。
-        // RunManager.OnEnded() 的全部写入（UpdateProgressWithRunData 连胜 /
+        // RunManager.OnEnded() 的战绩写入（UpdateProgressWithRunData 连胜 /
         // CreateRunHistoryEntry 历史 / AchievementsHelper 成就 / 指标上传 / 删档）
         // 都包在 `if (ShouldSave)` 里 —— 重开期间把 ShouldSave 置 false，旧局即"无痕消失"。
         // 新局由 SetUpNewSingleplayer(state, shouldSave: true) 自动恢复为 true。
+        //
+        // ⚠️ 两处「无痕」之外的既定事实（官方读档/开局流程自带，改不了，只能如实告知）：
+        //   1) "重启房间/本层/回到地图"走 SetUpSavedSingleplayer → 内部 IncrementNumReloads
+        //      会把 NumReloads +1 并立刻写 current_run.save（它不看 ShouldSave）；
+        //      结算时该计数会随 RunMetrics 上传。即"读档次数"会记上这些次回滚。
+        //   2) OnEnded 里战败的敌人图鉴解锁（CheckUpdateEnemyDiscoveryAfterLoss）在 ShouldSave
+        //      判据之外 —— 但本 mod 从不调用 OnEnded，所以实际不会触发。
         // ══════════════════════════════════════════════════════════════════
         bool prevShouldSave = RunManager.Instance.ShouldSave;
         bool suppressed = TrySetShouldSave(false);
         Entry.Logger?.Info($"[QuickRestart] 无痕标记 ShouldSave=false → {suppressed}（prev={prevShouldSave}）");
+        if (!suppressed)
+        {
+            // 反射失败 = 无痕保护失效：旧局会正常写入历史并可能断连胜。静默降级是玩家最难察觉的一种坏，
+            // 必须当场说清楚（日志 + 屏幕提示），让反馈里能一眼看到根因。
+            Entry.Logger?.Error("[QuickRestart] 无法关闭 ShouldSave：本次重启的无痕保护不会生效（旧局可能写入历史/断连胜）");
+            ModToast.Show("警告：无痕保护未生效，旧局可能计入战绩");
+        }
 
-        // 新局：旧局的幕快照作废（新局 Act 0 的地图屏就绪后会重新记录）
+        // 新局：旧局的幕快照与进房前快照作废（新局 Act 0 的地图屏就绪后会重新记录）
         ActSnapshotStore.Reset();
+        RoomEntryTracker.Reset();
 
         try
         {
@@ -678,7 +741,7 @@ internal static class RestartService
 
             // ③ 等帧优化：新场景已在 StartRun 内 SetCurrentScene 并完成 EnterAct(0)，2 帧确认即可
             await WaitFrames(2);
-            Entry.Logger?.Info($"[QuickRestart] {tag}完成：旧局未写入历史/未中断连胜 · 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
+            Entry.Logger?.Info($"[QuickRestart] {tag}完成：旧局未写入历史/未中断连胜（无痕生效={suppressed}） · 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
         }
         catch (Exception ex)
         {
@@ -687,11 +750,32 @@ internal static class RestartService
             if (suppressed)
                 TrySetShouldSave(prevShouldSave);
             Entry.Logger?.Error($"[QuickRestart] 重启本局失败: {ex}");
+
+            // 开局前的 ActSnapshotStore/RoomEntryTracker.Reset 已把旧局快照作废；若两条路径都没能开出新局、
+            // 旧局还活着，就得立刻用当前状态补一份幕快照与选路前快照 —— 否则"重启本层"会一直静默降级成
+            // "仅重进本幕"、"重启房间"会一直降级成"新建房间重进（牌序重随机）"。
+            try
+            {
+                if (RunManager.Instance.DebugOnlyGetState() != null)
+                {
+                    ActSnapshotStore.CaptureIfNeeded();
+                    RoomEntryTracker.EnsurePreMapPointSnapshot();
+                }
+            }
+            catch (Exception ex2)
+            {
+                Entry.Logger?.Warn($"[QuickRestart] 重启本局失败后的幕快照补记未成功: {ex2.Message}");
+            }
         }
     }
 
     public static async Task RetryCombatAsync()
     {
+        // ★ 与其它入口同一道模式守卫：这里必须自己判，"联机下不注入按钮"只挡住了注入点、
+        //   挡不住任何一条旁路调用（本方法就是由选牌界面按钮回调进来的）。
+        if (IsBlockedByMode("重新挑战"))
+            return;
+
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
         {
             Entry.Logger?.Warn("[QuickRestart] 已有重启流程进行中，忽略重新挑战");
@@ -723,13 +807,10 @@ internal static class RestartService
     /// </summary>
     public static async Task RewindToMapAsync()
     {
-        // ★ 联机对局统一拒绝（与 ExecuteRestart 同一防线；详见 NetGuard）
-        if (NetGuard.IsMultiplayer())
-        {
-            Entry.Logger?.Warn("[QuickRestart] 联机模式下不支持回到地图（回滚），已忽略");
-            ModToast.Show("联机模式下不可用（回溯之镜仅支持单人）");
+        // ★ 联机拒绝；每日挑战局**放行**（allowDaily）—— 这是原地回滚，不改种子、不重开局，
+        //   且每日局的"刀下留人"要保留这个出路（用户决定）。联机下两个出路都不给，见 NetGuard。
+        if (IsBlockedByMode("回到地图", allowDaily: true))
             return;
-        }
 
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
         {
@@ -864,8 +945,10 @@ internal static class RestartService
     /// 解除战斗暂停。刀下留人时会调用 CombatManager.Pause() 冻结战斗（弹窗选择期间），
     /// 解除前必须确保玩家已脱离 HP=0 状态（否则 Unpause 后死亡检测立即再次触发）。
     /// 非暂停时为无操作，可安全重复调用。
+    /// <para>供 <see cref="DeathInterceptPatch"/> 共用：弹窗"未被选择就被关闭"时也必须解除暂停，
+    /// 否则战斗永久冻结（玩家已复活 → 不会再产生死亡调用 → 没有第二次机会解除）。</para>
     /// </summary>
-    private static void EnsureCombatUnpaused()
+    internal static void EnsureCombatUnpaused()
     {
         try
         {

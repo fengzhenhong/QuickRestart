@@ -59,7 +59,7 @@ internal static class ActSnapshotStore
             {
                 _diskCheckedRunStart = runStart;
                 _diskCheckedActIndex = actIndex;
-                var disk = ActSnapshotPersistence.TryLoad(runStart, actIndex);
+                var disk = ActSnapshotPersistence.TryLoad(runStart, actIndex, state.Rng?.StringSeed);
                 if (disk != null)
                 {
                     _snapshot = disk;

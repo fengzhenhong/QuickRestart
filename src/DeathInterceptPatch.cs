@@ -22,6 +22,41 @@ internal static class DeathInterceptCore
 {
     private static bool _isIntercepting;
 
+    /// <summary>
+    /// 一次性放行闩（按"局起始时间戳"记）：玩家在弹窗里选了"放弃本局"后置为本局标识，
+    /// 此后本局内所有死亡调用一律放行、不再拦截弹窗；开新局（<c>_startTime</c> 变化）自动恢复。
+    /// <para>⚠️ 为什么必须有它：每日挑战局的"放弃本局"只能走官方 <c>RunManager.Abandon()</c>
+    /// （无痕重开会丢每日结算依据），而 <c>AbandonInternal</c> 内部会
+    /// <c>GuaranteeKillAllPlayers → CreatureCmd.Kill(force:true)</c> 再触发一遍死亡流程 ——
+    /// 不放行就会被我们自己重新拦下、再弹一次窗，永远结算不完。</para>
+    /// </summary>
+    private static long _releaseDeathRunStart;
+
+    /// <summary>局标识不可用时（<c>RunManager._startTime</c> 反射失效）的放行兜底：本会话内持续放行。</summary>
+    private static bool _releaseDeathWithoutId;
+
+    /// <summary>放弃本局：解除拦截并让本局剩余死亡调用直接放行（配合官方 Abandon 使用）。</summary>
+    private static void ReleaseDeathForCurrentRun()
+    {
+        _isIntercepting = false;
+        _releaseDeathRunStart = RoomEntryTracker.CurrentRunStart();
+        _releaseDeathWithoutId = _releaseDeathRunStart == 0;
+        Entry.Logger?.Info($"[QuickRestart] 玩家选择放弃本局：本局后续死亡调用放行（局标识={_releaseDeathRunStart}）");
+    }
+
+    /// <summary>
+    /// 本次死亡调用是否已被玩家主动放弃（应放行，让官方结算跑完）。
+    /// <para>失效方式＝开新局（<c>_startTime</c> 变化），无需手动复位：官方流程开的局、
+    /// 本 mod 重启出来的局都会拿到新的局标识，闩自然对不上。</para>
+    /// </summary>
+    private static bool IsDeathReleased()
+    {
+        if (_releaseDeathWithoutId)
+            return true;            // 局标识取不到：朝"不拦截"一侧兜底（最坏是本次不救，绝不会卡死）
+        long cur = RoomEntryTracker.CurrentRunStart();
+        return _releaseDeathRunStart != 0 && cur == _releaseDeathRunStart;
+    }
+
     /// <summary>返回 true = 已拦截（调用方应 return false 阻止原方法执行）。</summary>
     public static bool TryIntercept(string source)
     {
@@ -32,6 +67,13 @@ internal static class DeathInterceptCore
         //   ② 队友死亡与本地玩家无关（不应弹"刀下留人"）—— 联机下让游戏按官方流程处理。
         //   玩家反馈（2026-09-15）：联机模式下队友死亡也会触发刀下留人。
         if (NetGuard.IsMultiplayer()) return false;
+
+        // ★ 已选"放弃本局"：放行，让官方结算跑完（见 _releaseDeathRunStart）
+        if (IsDeathReleased())
+        {
+            Entry.Logger?.Info($"[QuickRestart] 死亡调用按玩家选择放行（放弃本局结算中，来源={source}）");
+            return false;
+        }
 
         try
         {
@@ -50,6 +92,9 @@ internal static class DeathInterceptCore
 
                 Entry.Logger?.Warn("[QuickRestart] 刀下留人弹窗已关闭但拦截状态未复位，重置后按新死亡重新处理");
                 _isIntercepting = false;
+                // 弹窗关闭时 OnDismissed 已解除暂停；此处再兜一次（幂等），
+                // 因为玩家已被复活 → 不会再产生死亡调用 → 没有这次兜底战斗就永久卡在暂停上。
+                RestartService.EnsureCombatUnpaused();
                 // 继续往下走：按当前致命伤害重新拦截并弹窗
             }
 
@@ -81,7 +126,14 @@ internal static class DeathInterceptCore
             // 立即复活：保持战斗状态有效，避免 HP=0 持续触发死亡相关判定
             RevivePlayer(localPlayer);
 
+            // 每日挑战局：两个出路的语义不同 —— "回到地图"照给（原地回滚，不改种子），
+            // "放弃本局"改为走游戏官方放弃结算，而不是普通局的"无痕同种子重开"。
+            bool daily = state.GameMode == GameMode.Daily;
+
             bool popupShown = ConfirmPopupHelper.ShowDeathInterceptPopup(
+                daily
+                    ? "生命归零！\n【确认】回到地图重新挑战（进本房间前）\n【取消】放弃本局（按游戏正常流程结算本次失败）"
+                    : "生命归零！\n【确认】回到地图重新挑战（进本房间前）\n【取消】放弃本局（同一种子从头重开）",
                 onRetry: () =>
                 {
                     _isIntercepting = false;
@@ -91,7 +143,23 @@ internal static class DeathInterceptCore
                 onAbandon: () =>
                 {
                     _isIntercepting = false;
+                    if (daily)
+                    {
+                        // 每日局不能无痕重开（重开局拿不到 DailyTime 结算依据）→ 用游戏自己的
+                        // "放弃本局"（暂停菜单 GiveUp 走的就是它）正常结算。
+                        // ⚠️ 必须先放行：Abandon 内部会再强制杀一次玩家，不放行会被我们自己拦下反复弹窗。
+                        ReleaseDeathForCurrentRun();
+                        RunManager.Instance.Abandon();
+                        return;
+                    }
                     _ = RestartService.ExecuteRestart(RestartService.RestartType.RestartRun);
+                },
+                // 弹窗未经选择即被关闭：玩家已被复活、不会再产生死亡调用，
+                // 不解除暂停 = 战斗永久冻结（玩家以为游戏卡死）。这里成对收尾。
+                onDismissed: () =>
+                {
+                    _isIntercepting = false;
+                    RestartService.EnsureCombatUnpaused();
                 });
 
             if (!popupShown)
@@ -100,14 +168,7 @@ internal static class DeathInterceptCore
                 // 避免战斗永久冻结卡死游戏；再次死亡会重新尝试拦截。
                 Entry.Logger?.Warn("[QuickRestart] 刀下留人弹窗不可用，解除暂停继续战斗（跳过本次拦截）");
                 _isIntercepting = false;
-                try
-                {
-                    cm.Unpause();
-                }
-                catch (Exception ex)
-                {
-                    Entry.Logger?.Warn($"[QuickRestart] 解除战斗暂停失败: {ex.Message}");
-                }
+                RestartService.EnsureCombatUnpaused();
             }
 
             return true;
@@ -124,7 +185,7 @@ internal static class DeathInterceptCore
     {
         try
         {
-            RoomEntryTracker.RestorePreRoomState();
+            RoomEntryTracker.RestorePreRoomHp();
         }
         catch (Exception ex)
         {

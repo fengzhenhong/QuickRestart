@@ -27,9 +27,6 @@ internal static class KeyBindPanel
 
     public static bool IsOpen => _centerRoot != null && GodotObject.IsInstanceValid(_centerRoot);
 
-    /// <summary>是否正在等待玩家按下新按键。</summary>
-    public static bool IsAwaiting => _awaiting != null;
-
     public static void ToggleFrom(NPauseMenu menu)
     {
         if (IsOpen)

@@ -33,4 +33,28 @@ internal static class NetGuard
             return false;
         }
     }
+
+    /// <summary>
+    /// 当前是否为**每日挑战局**（<c>GameMode.Daily</c>）：本 mod 的重启/回滚一律拒绝。
+    ///
+    /// <para>原因：① 每日局的结算依据 <c>RunManager.DailyTime</c> 是 <c>StartNewSingleplayerRun</c>
+    /// 的独立参数（默认 null），而它不在 <c>RunState</c> 里 —— 用"重启本局"重开后会得到
+    /// 「模式仍是 Daily、但 DailyTime 为空」的混合态，排行与分数结算都会错位；
+    /// ② 「重启新局」等于重 roll 每日种子，本身就是每日规则不允许的；
+    /// ③ 反复回滚 = 用同一份每日种子无限重试，与每日挑战"一次机会"的定义冲突。</para>
+    ///
+    /// <para>普通局（Standard）与自定义局（Custom）不受影响 —— 前者是设计目标，
+    /// 后者的无痕行为由玩家自己承担。取不到状态时按"非每日"处理（各入口仍有自己的状态守卫）。</para>
+    /// </summary>
+    public static bool IsDailyRun()
+    {
+        try
+        {
+            return RunManager.Instance.DebugOnlyGetState()?.GameMode == GameMode.Daily;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }

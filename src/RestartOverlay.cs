@@ -70,26 +70,40 @@ internal static class RestartOverlay
     {
         try
         {
-            bool any = false;
             if (_rect != null && GodotObject.IsInstanceValid(_rect) && _rect.Visible)
             {
                 KillTween(ref _rectTween);
                 _rectTween = FadeOutNode(_rect);
-                any = true;
             }
             if (_note != null && GodotObject.IsInstanceValid(_note) && _note.Visible)
             {
                 KillTween(ref _noteTween);
                 _noteTween = FadeOutNode(_note);
-                any = true;
             }
-            if (!any)
-                return;
         }
         catch (Exception ex)
         {
             Entry.Logger?.Warn($"[QuickRestart] 过场遮罩淡出失败（不影响功能）: {ex.Message}");
             HideNow();
+        }
+    }
+
+    /// <summary>彻底移除遮罩层（Mod 被停用时调用，避免留下没人操作的常驻 CanvasLayer）。</summary>
+    public static void Shutdown()
+    {
+        try
+        {
+            KillTween(ref _rectTween);
+            KillTween(ref _noteTween);
+            if (_layer != null && GodotObject.IsInstanceValid(_layer))
+                _layer.QueueFree();
+            _layer = null;
+            _rect = null;
+            _note = null;
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 过场遮罩卸载失败: {ex.Message}");
         }
     }
 

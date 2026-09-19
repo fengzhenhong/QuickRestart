@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Runs;
 using STS2RitsuLib.Patching.Core;
@@ -76,13 +77,18 @@ internal sealed class RunInputPatch : IPatchMethod
 
         if (action == null || restartType == null) return;
 
-        // ★ 联机对局：回滚/重启类功能不可用（本地回滚会被校验和判定为状态分歧，详见 NetGuard）。
-        //   在此明确提示，避免玩家点了确认框才发现不可用。
-        if (NetGuard.IsMultiplayer())
+        // ★ 输入环境守卫：本补丁挂在 NGame._Input（比游戏的 hotkey 处理更早、且不经它的闸门），
+        //   单键 + 无修饰符 + "重启房间免确认"，一旦误触发就是不可逆的状态回滚。
+        //   与游戏自身的守卫对齐（NHotkeyManager._UnhandledInput 判焦点与控制台；
+        //   设置页判 TextEdit/LineEdit 焦点；弹窗用 AddBlockingScreen 屏蔽全部 hotkey）。
+        if (IsInputEnvBlocked(out string? reason))
         {
-            ModToast.Show("联机模式下不可用（回溯之镜仅支持单人）");
+            Entry.Logger?.Info($"[QuickRestart] 快捷键 {action} 已忽略：{reason}");
             return;
         }
+
+        // ★ 模式守卫（联机 / 每日挑战局一律拒绝，命中时内部已给出屏幕提示；详见 NetGuard 与 RestartService）
+        if (RestartService.IsBlockedByMode(action)) return;
 
         // 不再要求暂停菜单打开 —— 战斗中直接可用；仍要求存在进行中的 run。
         if (RunManager.Instance.DebugOnlyGetState() == null) return;
@@ -104,4 +110,34 @@ internal sealed class RunInputPatch : IPatchMethod
             () => _ = RestartService.ExecuteRestart(type));
     }
 
+    /// <summary>
+    /// 按键环境是否不该触发重启。命中时给出人话原因（写日志，便于玩家反馈"按了没反应"时定位）。
+    /// </summary>
+    private static bool IsInputEnvBlocked(out string? reason)
+    {
+        // 1) 窗口失焦：Alt-Tab 出去在别的程序里打字，Godot 仍可能把按键送进 _Input
+        if (!NGame.IsGameFocusedWindow())
+        {
+            reason = "游戏窗口未获焦";
+            return true;
+        }
+
+        // 2) 文本框正在吃键盘（输入种子/昵称等）：字母键属于内容，不是快捷键
+        Control? focus = NGame.Instance?.GetWindow()?.GuiGetFocusOwner();
+        if (focus is TextEdit or LineEdit)
+        {
+            reason = "焦点在文本输入框";
+            return true;
+        }
+
+        // 3) 有模态弹窗开着（含我方"刀下留人"与确认框）：此时触发重启会与弹窗选择互相打架
+        if (NModalContainer.Instance?.OpenModal != null)
+        {
+            reason = "有模态弹窗打开";
+            return true;
+        }
+
+        reason = null;
+        return false;
+    }
 }

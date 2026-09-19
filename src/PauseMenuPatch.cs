@@ -22,9 +22,9 @@ internal sealed class PauseMenuReadyPatch : IPatchMethod
     public static void Postfix(NPauseMenu __instance)
     {
         if (!Entry.Enabled) return;
-        // ★ 联机对局不注入按钮：联机下所有回滚/重启功能均禁用（详见 NetGuard），
-        //   按钮不出现比"点了才提示不可用"更直观（点击处的守卫是第二道防线）。
-        if (NetGuard.IsMultiplayer()) return;
+        // ★ 联机对局 / 每日挑战局不注入按钮：这两种模式下所有回滚/重启功能均禁用（详见 NetGuard），
+        //   按钮不出现比"点了才提示不可用"更直观（执行点的 IsBlockedByMode 是第二道防线）。
+        if (NetGuard.IsMultiplayer() || NetGuard.IsDailyRun()) return;
         try
         {
             PauseMenuButtonInjector.InjectButtons(__instance);
@@ -53,18 +53,25 @@ internal sealed class PauseMenuExitPatch : IPatchMethod
 
 internal static class PauseMenuButtonInjector
 {
+    /// <summary>注入用按钮名（同时是"已注入"的判据：重复 _Ready 时按名字复用，不叠加）。</summary>
+    private static readonly (string Name, string Label, Action<NButton> Handler)[] Buttons =
+    [
+        ("RestartRoom", "重启房间", OnRestartRoomPressed),
+        ("RestartFloor", "重启本层", OnRestartFloorPressed),
+        ("RestartRun", "重启本局", OnRestartRunPressed),
+        ("NewRun", "重启新局", OnNewRunPressed),
+        ("KeyBinds", "快捷键设置", OnKeyBindsPressed),
+    ];
+
     private static NPauseMenu? _currentMenu;
-    private static NPauseMenuButton? _keyBindBtn;
-    private static NPauseMenuButton? _restartRoomBtn;
-    private static NPauseMenuButton? _restartFloorBtn;
-    private static NPauseMenuButton? _restartRunBtn;
-    private static NPauseMenuButton? _newRunBtn;
 
     public static void InjectButtons(NPauseMenu menu)
     {
         _currentMenu = menu;
 
-        var buttonContainer = menu.GetNode<Control>("%ButtonContainer");
+        // 用 GetNodeOrNull：GetNode 找不到节点是**抛异常**而不是返回 null，那样下面的
+        // "ButtonContainer 缺失"降级分支永远走不到（异常会被 Postfix 的 catch 当 Error 记掉）。
+        var buttonContainer = menu.GetNodeOrNull<Control>("%ButtonContainer");
         if (buttonContainer == null)
         {
             Entry.Logger?.Warn("[QuickRestart] 找不到 ButtonContainer");
@@ -78,13 +85,16 @@ internal static class PauseMenuButtonInjector
             return;
         }
 
-        _restartRoomBtn = EnsureButton(templateBtn, "RestartRoom", "重启房间", buttonContainer, OnRestartRoomPressed);
-        _restartFloorBtn = EnsureButton(templateBtn, "RestartFloor", GetFloorLabel(), buttonContainer, OnRestartFloorPressed);
-        _restartRunBtn = EnsureButton(templateBtn, "RestartRun", "重启本局", buttonContainer, OnRestartRunPressed);
-        _newRunBtn = EnsureButton(templateBtn, "NewRun", "重启新局", buttonContainer, OnNewRunPressed);
-        _keyBindBtn = EnsureButton(templateBtn, "KeyBinds", "快捷键设置", buttonContainer, OnKeyBindsPressed);
+        int ok = 0;
+        foreach (var (name, label, handler) in Buttons)
+        {
+            // "重启本层"按钮文本实时带当前幕数（如"重启本层（第 2 幕）"）
+            string text = name == "RestartFloor" ? GetFloorLabel() : label;
+            if (EnsureButton(templateBtn, name, text, buttonContainer, handler) != null)
+                ok++;
+        }
 
-        Entry.Logger?.Info("[QuickRestart] 暂停菜单重启按钮与快捷键设置已注入");
+        Entry.Logger?.Info($"[QuickRestart] 暂停菜单重启按钮与快捷键设置已注入（{ok}/{Buttons.Length}）");
     }
 
     /// <summary>"重启本层"按钮文本：实时带当前幕数（如"重启本层（第 2 幕）"）。</summary>
@@ -111,8 +121,14 @@ internal static class PauseMenuButtonInjector
     /// <summary>
     /// 取出（或创建）注入按钮：每次打开暂停菜单都会 _Ready → 重新注入，
     /// 已有同名按钮时只刷新文本，避免重复 AddChild / 重复连接信号。
+    /// 返回 null = 克隆失败（调用方跳过该按钮）。
     /// </summary>
-    private static NPauseMenuButton EnsureButton(NPauseMenuButton template, string name, string label, Control container, Action<NButton> handler)
+    /// <remarks>
+    /// ⚠️ 克隆失败时**绝不能**退化成"用模板按钮顶上"：那是游戏自己的 GiveUp（放弃游戏），
+    /// 把重启回调连到它上面 = 玩家点"放弃游戏"却执行了重启，而且每次开菜单还会多连一条。
+    /// </remarks>
+    private static NPauseMenuButton? EnsureButton(NPauseMenuButton template, string name, string label,
+        Control container, Action<NButton> handler)
     {
         var existing = container.GetNodeOrNull<NPauseMenuButton>(name);
         if (existing != null)
@@ -122,17 +138,21 @@ internal static class PauseMenuButtonInjector
         }
 
         var btn = CreateButton(template, name, label, container);
+        if (btn == null)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 按钮注入失败，跳过 name={name}");
+            return null;
+        }
         btn.Connect(NClickableControl.SignalName.Released, Callable.From<NButton>(handler));
         return btn;
     }
 
-    private static NPauseMenuButton CreateButton(NPauseMenuButton template, string name, string label, Control container)
+    private static NPauseMenuButton? CreateButton(NPauseMenuButton template, string name, string label, Control container)
     {
-        var btn = template.Duplicate() as NPauseMenuButton;
-        if (btn == null)
+        if (template.Duplicate() as NPauseMenuButton is not NPauseMenuButton btn)
         {
             Entry.Logger?.Warn($"[QuickRestart] 克隆按钮失败 name={name}");
-            return template;
+            return null;
         }
 
         btn.Name = name;
@@ -199,12 +219,8 @@ internal static class PauseMenuButtonInjector
 
     public static void Cleanup()
     {
+        // 注入的按钮是本菜单节点的子节点，菜单被释放时一起释放；这里只需放掉我方引用
         KeyBindPanel.Close();
         _currentMenu = null;
-        _keyBindBtn = null;
-        _restartRoomBtn = null;
-        _restartFloorBtn = null;
-        _restartRunBtn = null;
-        _newRunBtn = null;
     }
 }

@@ -21,7 +21,7 @@ internal sealed class CardRewardScreenReadyPatch : IPatchMethod
     {
         if (!Entry.Enabled) return;
         if (!SettingsManager.Current.EnablePostCombatRetry) return;
-        if (NetGuard.IsMultiplayer()) return;   // ★ 联机不注入（同暂停菜单；联机下重挑战禁用，详见 NetGuard）
+        if (NetGuard.IsMultiplayer() || NetGuard.IsDailyRun()) return;   // ★ 联机/每日局不注入（同暂停菜单；详见 NetGuard）
         try
         {
             RetryButtonInjector.Inject(__instance);
