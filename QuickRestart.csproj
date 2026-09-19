@@ -39,7 +39,10 @@
     <Error Condition="!Exists('$(RitsuLibDir)/STS2-RitsuLib.dll')" Text="找不到 RitsuLib" />
   </Target>
 
-  <Target Name="CopyMod" AfterTargets="Build">
+  <!-- 构建后部署到 mods\（游戏原生加载器读 <id>.json + 同名 <id>.dll）。
+       传 -p:CopyModOnBuild=false 可跳过部署：用于"只验证编译、不碰 mods/"。
+       不要用 dotnet build -t:Compile 做验证（会破坏 obj 增量导致嵌入资源丢失）。 -->
+  <Target Name="CopyMod" AfterTargets="Build" Condition="'$(CopyModOnBuild)' != 'false'">
     <MakeDir Directories="$(ModOutputDir)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModOutputDir)" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)/QuickRestart.json" DestinationFolder="$(ModOutputDir)" />
