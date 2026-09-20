@@ -5,6 +5,8 @@
 《杀戮尖塔 2》练习与救场模组 —— 把「重来」做到极致：从重开一个房间到重开整局，全部基于**完整运行快照回滚**，牌序与随机数精确重现。
 
 > 适用于游戏 v0.111+，依赖 [STS2-RitsuLib](https://github.com/BAKAOLC/STS2-RitsuLib)（≥ 0.5.18，兼容 0.6.x）。
+>
+> 玩家向的完整功能说明与已知限制：[docs/Features.md](docs/Features.md)
 
 ## 功能
 
@@ -264,6 +266,22 @@
 - **无痕保护** —— 重启不记失败、不断连胜、不写历史与成就
 
 ## 从源码构建
+
+### 目录结构
+
+```
+QuickRestart/
+├── QuickRestart.csproj      ← 工程文件必须在仓库根（见下）
+├── QuickRestart.json        ← 加载器清单（MOD 身份是英文 id "QuickRestart"，显示名「回溯之镜」在 json 里）
+├── README.md / LICENSE / .gitignore / .gitattributes / local.props.example
+├── src/                     ← 全部 C# 源码（18 个 .cs）
+└── docs/Features.md          ← 玩家向功能说明与已知限制
+```
+
+> ⚠️ **别把 `QuickRestart.csproj` 挪进 `src/`** —— 本工程用 `Godot.NET.Sdk`，它以 csproj 所在目录为项目根
+> （`.godot/` 与编译中间目录都挂在那儿），另外 csproj 里有两处按仓库根算的相对路径：
+> `Import Project="./local.props"` 与 `CopyMod` 里的 `$(MSBuildProjectDirectory)/QuickRestart.json`。
+> 移进 `src/` 要么直接编译失败，要么构建悄悄不再部署 json。要改请连带这三处一起改并重新验证构建。
 
 - 需要 .NET 9 SDK
 - 复制 `local.props.example` 为 `local.props`，修改为你的游戏路径
