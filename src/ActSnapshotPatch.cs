@@ -7,7 +7,7 @@ namespace QuickRestart;
 
 /// <summary>
 /// 地图屏 SetMap 后记录幕起点快照（重启本层精确回滚的数据来源）。
-/// SetMap 签名（反编译确认）：SetMap(ActMap map, ulong seed, bool clearDrawings)。
+/// 补丁目标：<c>NMapScreen.SetMap(ActMap map, ulong seed, bool clearDrawings)</c>。
 /// </summary>
 internal sealed class ActSnapshotPatch : IPatchMethod
 {

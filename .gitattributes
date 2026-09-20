@@ -1,0 +1,10 @@
+# 仓库内源码统一以 LF 存储、checkout 也保持 LF。
+# 不写死这一条的话，在 core.autocrlf=true 的 Windows 机器上，别人 clone 后随手改一行
+# 就可能产生"整文件换行改动"的巨型 diff（本仓库历史文件本来就是 LF）。
+* text=auto eol=lf
+
+*.dll binary
+*.pck binary
+*.zip binary
+*.png binary
+*.jpg binary

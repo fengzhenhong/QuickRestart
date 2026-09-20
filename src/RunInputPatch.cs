@@ -41,7 +41,6 @@ internal sealed class RunInputPatch : IPatchMethod
 
         // ★ 控制台打开时不响应（玩家在控制台里打字，如输入含 r/f/t/n 的命令会误触发重启）。
         //   游戏自身的输入处理（NHotkeyManager 等）统一用同一守卫；IsConsoleVisible 在控制台
-        //   尚未创建时也安全（返回 false）。—— 玩家反馈修复，2026-09-15
         if (NDevConsole.IsConsoleVisible) return;
 
         // 快捷键设置面板：捕获/拦截按键（面板打开时由它决定是否消费）
@@ -98,7 +97,7 @@ internal sealed class RunInputPatch : IPatchMethod
 
         var type = restartType.Value;
 
-        // ★ 重启房间免确认（用户要求）：练习场景高频连按，直接执行；
+        // ★ 重启房间免确认：练习场景高频连按，直接执行；
         //   防误触改由 0.5s 冷却承担。重启本层/本局/新局仍弹确认框。
         if (type == RestartService.RestartType.RestartRoom)
         {
@@ -111,7 +110,7 @@ internal sealed class RunInputPatch : IPatchMethod
     }
 
     /// <summary>
-    /// 按键环境是否不该触发重启。命中时给出人话原因（写日志，便于玩家反馈"按了没反应"时定位）。
+    /// 按键环境是否不该触发重启。命中时给出人话原因（写日志，便于"按了没反应"时定位）。
     /// </summary>
     private static bool IsInputEnvBlocked(out string? reason)
     {

@@ -15,7 +15,7 @@ namespace QuickRestart;
 /// <para>[2] LoseCombat —— 设置 PendingLoss 的失败标记，**关键拦截点**：不拦它的话，
 /// 回合循环会在 CheckWinCondition 里走完失败结算（IsInProgress=false + CombatEnded →
 /// 游戏后台已终结这场战斗），"重新挑战"重进时与残留失败流程冲突，
-/// 卡死在 NCombatRoom.Create 之前（日志实证：Preloading Complete 后无 Creating NCombatRoom）。</para>
+/// 卡死在 NCombatRoom.Create 之前（预加载完成后不再创建战斗房间）。</para>
 /// <para>拦截成功后立即复活玩家（HP=0 会持续触发死亡判定）并 Pause 战斗，弹窗等玩家选择。</para>
 /// </summary>
 internal static class DeathInterceptCore
@@ -65,7 +65,6 @@ internal static class DeathInterceptCore
 
         // ★ 联机对局不拦截：① 本地回滚在联机下必然被校验和判定为状态分歧（详见 NetGuard）；
         //   ② 队友死亡与本地玩家无关（不应弹"刀下留人"）—— 联机下让游戏按官方流程处理。
-        //   玩家反馈（2026-09-15）：联机模式下队友死亡也会触发刀下留人。
         if (NetGuard.IsMultiplayer()) return false;
 
         // ★ 已选"放弃本局"：放行，让官方结算跑完（见 _releaseDeathRunStart）

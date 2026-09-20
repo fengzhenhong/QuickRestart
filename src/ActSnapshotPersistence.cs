@@ -84,7 +84,7 @@ internal static class ActSnapshotPersistence
             }
 
             // ⚠️ 局标识不可用时**绝不**采用磁盘快照：`StartTime` 取自 RunManager._startTime 反射，
-            //    该字段一旦被游戏重命名/改类型就会恒为 0（v0.1.4 前真实发生过）。此时若只比幕号，
+            //    该字段一旦被游戏重命名/改类型就会恒为 0。此时若只比幕号，
             //    上一局同幕号的快照会被当成本局幕初 → 重启本层把当前局改成另一局的状态。
             //    宁可降级为"只能回到读档点"（功能变弱但绝不会改错状态）。
             if (currentRunStart == 0 || snap.StartTime == 0)

@@ -14,15 +14,14 @@ public static class Entry
 
     /// <summary>
     /// 玩家可见的中文显示名 —— 单一出处（加载器 json、屏幕提示、日志都用它）。
-    /// <para>⚠️ 历史产物里"回溯之镜/回溯之境"两种写法混用过（发布包文件名与 json 名字不一致），
-    /// 现统一为 <c>回溯之镜</c>（发布 zip 与本文档文件名曾用"境"，v0.1.6 起也改回"镜"）。</para>
+    /// MOD 目录与 DLL 名保持英文 QuickRestart（加载器要求与 json 的 id 一致）。
     /// </summary>
     public const string ModName = "回溯之镜";
 
     /// <summary>
     /// 当前代码版本 —— 与 QuickRestart.json 的 version 同步维护。
     /// <para>⚠️ 不能用 <c>Assembly.GetName().Version</c>：本工程 <c>GenerateAssemblyInfo=false</c>
-    /// （csproj 关了程序集信息生成），实测产物 AssemblyVersion/FileVersion 全为 0.0.0.0，
+    /// （csproj 关了程序集信息生成），产物 AssemblyVersion 恒为 0.0.0.0，
     /// 日志里永远看不到"线上跑的到底是哪一版"。改代码必须同时改这一个常量与 json。</para>
     /// </summary>
     public const string ModVersion = "0.1.6";

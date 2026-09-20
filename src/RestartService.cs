@@ -24,8 +24,7 @@ internal static class RestartService
         NewRun
     }
 
-    /// <summary>直接路径黑幕动画时长（秒）。NGame.Transition.FadeOut/FadeIn 默认各 0.8s —— 合计 1.6s 纯动画；
-    /// 直接路径改成 0.22s 显著缩短黑屏，观感仍平滑。想更慢/更快只调这一个常量。</summary>
+    /// <summary>直接路径的黑幕时长（秒）。游戏的淡入淡出默认各 0.8s，这里压到 0.22s；想调只改这一个常量。</summary>
     private const float DirectFadeSec = 0.22f;
 
     /// <summary>0=空闲 1=重启进行中。一次重启要跨多帧（回主菜单→等帧→读档，耗时数秒），
@@ -41,7 +40,7 @@ internal static class RestartService
     /// <param name="allowDaily">
     /// 每日挑战局是否放行。<c>false</c>=整族"重启"（房间/本层/本局/新局/战后重挑战）一律拒绝 ——
     /// 重开一局拿不到每日结算依据（<c>DailyTime</c> 不在对局状态里），也等于无限重 roll 每日种子。
-    /// <c>true</c>=允许"回到地图"这类**原地回滚**（刀下留人的出路之一，用户明确要求每日局保留救场）。
+    /// <c>true</c>=允许"回到地图"这类**原地回滚**（不改种子、不重开局，刀下留人的出路之一）。
     /// </param>
     internal static bool IsBlockedByMode(string what, bool allowDaily = false)
     {
@@ -134,7 +133,6 @@ internal static class RestartService
         // ★ 用「点击节点前」快照（PreMapPointSnapshot，捕获于 EnterMapCoord/AddVisitedMapCoord 之前）：
         //   此时房间类型**尚未 roll**（问号节点的类型由 Odds.UnknownMapPoint.Roll 决定并消耗 RNG）。
         //   回滚后走"重新进入本节点"会重演这次 roll、用的正是同一份 RNG → 问号房内容与首次完全一致。
-        //   ⚠️ 旧实现用 EnterRoom 前缀快照（= roll 之后的状态）→ 重启时触发二次 roll → 问号房内容会变化。
         var preSnap = RoomEntryTracker.PreMapPointSnapshot;
         if (preSnap == null
             || !RoomEntryTracker.IsSnapshotForCurrentRun(preSnap, RoomEntryTracker.PreMapPointRunStart, "重启房间"))
@@ -150,7 +148,7 @@ internal static class RestartService
             }
             catch (Exception ex)
             {
-                // 本兜底路径此前无 try（经"重新挑战"按钮进入时异常会变成未观察任务异常）
+                // 经"重新挑战"按钮进来时调用，异常若逃逸会变成未观察任务异常
                 Entry.Logger?.Error($"[QuickRestart] 重启房间失败（回退路径）: {ex}");
             }
             return;
@@ -171,7 +169,7 @@ internal static class RestartService
 
             if (SettingsManager.Current.FastRestartSkipMenu)
             {
-                // ④ 直接路径：FadeOut + CleanUp 后直接读档（SetUpSavedSingleplayer 只要求 State==null，
+                // 直接路径：FadeOut + CleanUp 后直接读档（SetUpSavedSingleplayer 只要求 State==null，
                 //    CleanUp 即满足）—— 跳过主菜单资源预载与场景创建；异常自动回退旧路径。
                 try
                 {
@@ -215,16 +213,15 @@ internal static class RestartService
                 await EnterRoomAgainAsync(runState, roomCoord, "重启房间");
             }
 
-            // ③ 等帧优化：LoadRun 内部已完成场景切换与本房间自动重进，2 帧确认即可
-            //   （旧路径的 5 帧是给"主菜单场景切换"留的，直接路径没有这次切换）
+            // 等 2 帧确认即可：读档内部已完成场景切换与本房间自动重进
             await WaitFrames(2);
             Entry.Logger?.Info($"[QuickRestart] ⏱ 重启房间 · 回滚+读档 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
 
             // ══════════════════════════════════════════════════════════════════
             // 房间内容由快照 RNG 决定 → 与首次进房完全一致（牌序相同、商店库存不刷新）。
             // "重新进入本节点"走 EnterRoomAgainAsync（AddVisitedMapCoord + EnterMapPointInternal，
-            // 等价于第一次点击该节点）—— 不再依赖 LoadRun 的"自动重进最后访问节点"：
-            // 那条路会 AppendToMapPointHistory 让地图历史凭空前进一格（玩家反馈的"前进一层"）。
+            // 等价于第一次点击该节点）—— 不走"自动重进最后访问节点"，
+            // 那条路会 AppendToMapPointHistory，让地图历史凭空前进一格。
             // ══════════════════════════════════════════════════════════════════
             var restoredRoom = RunManager.Instance.DebugOnlyGetState()?.CurrentRoom;
             Entry.Logger?.Info($"[QuickRestart] 重启房间完成：当前房间={restoredRoom?.RoomType.ToString() ?? "无"}（期望 {roomType}；内容与首次一致，商店不会刷新）");
@@ -242,8 +239,8 @@ internal static class RestartService
     }
 
     /// <summary>
-    /// 构造与当前房间等价的全新实例（清空战斗/宝箱/事件的可变状态）；不支持的房间类型原样返回（沿用旧行为）。
-    /// 路径与游戏 <c>RunManager.CreateRoom</c> 官方实现保持一致。
+    /// 构造与当前房间等价的全新实例（清空战斗/宝箱/事件的可变状态）；不支持的房间类型原样返回。
+    /// 各类型的构造分支与 <c>RunManager.CreateRoom</c> 保持一致。
     /// </summary>
     private static AbstractRoom RebuildRoomInstance(AbstractRoom room, RunState state)
     {
@@ -253,8 +250,8 @@ internal static class RestartService
             {
                 // ★ 不能复用旧战斗的 mutable Encounter：它的 _monstersWithSlots 已生成，
                 //   里面的怪物已设过 RunRng，StartCombat → CreateCreature 会抛
-                //   "RunRng has already been set!"（日志实证）。
-                //   官方路径（RunManager.CreateRoom）：规范 EncounterModel.ToMutable() 出全新 mutable
+                //   "RunRng has already been set!"。
+                //   正确做法（同 RunManager.CreateRoom）：用规范 EncounterModel.ToMutable() 出全新 mutable
                 //   → 进房时 GenerateMonstersWithSlots 重新生成干净怪物。
                 var canonical = ModelDb.GetByIdOrNull<EncounterModel>(combat.Encounter.Id);
                 return new CombatRoom(canonical != null ? canonical.ToMutable() : combat.Encounter, state);
@@ -262,7 +259,7 @@ internal static class RestartService
             case TreasureRoom:
                 return new TreasureRoom(state.CurrentActIndex);
             case EventRoom eventRoom:
-                // 规范事件重新触发（与官方 CreateRoom 的 Event 分支同款）
+                // 规范事件重新触发
                 return new EventRoom(eventRoom.CanonicalEvent);
             case MerchantRoom:
                 return new MerchantRoom();
@@ -320,7 +317,7 @@ internal static class RestartService
         {
             // 官方读档流程：CleanUp（内含 State=null）→ RunState.FromSerializable 重建 →
             //   SetUpSavedSingleplayer（要求 State==null）→ NGame.LoadRun。
-            // ④ 直接路径跳过其中的主菜单环节（FadeOut 后直接 CleanUp）；异常自动回退完整旧路径。
+            //   直接路径跳过其中的主菜单环节（FadeOut 后直接 CleanUp）；异常自动回退完整流程。
             long t0 = (long)Time.GetTicksMsec();
             bool direct = false;
 
@@ -367,11 +364,10 @@ internal static class RestartService
                 await RunManager.Instance.EnterRoom(new MapRoom());
             }
 
-            // ③ 等帧优化：LoadRun 已完成场景切换与房间自动重进，2 帧确认即可
+            // 等 2 帧确认即可：读档已完成场景切换与房间自动重进
             await WaitFrames(2);
 
             // 落点兜底：本层快照回滚后应停在地图屏（本幕起点只能从地图继续）；异常落点强制退回，
-            // 并记录实际落点 —— 旧版此处无日志，"按了没回去"无从判断（2026-09-15 玩家反馈）。
             try
             {
                 var restoredRoom = RunManager.Instance.DebugOnlyGetState()?.CurrentRoom;
@@ -403,10 +399,9 @@ internal static class RestartService
 
     /// <summary>
     /// 反射设置 RunManager.ShouldSave。
-    /// ⚠️ 不能用直接赋值：Krafs.Publicizer 只改**编译期**签名 —— 直接写编译通过，
-    /// 但运行时抛 MethodAccessException（日志实证：Attempt by method '...&lt;RestartRunAsync&gt;d__4.MoveNext()'
-    /// to access method 'MegaCrit.Sts2.Core.Runs.RunManager.set_ShouldSave(Boolean)' failed）。
-    /// 反射调用私有 setter 则始终可用。本方法自身不抛异常。
+    /// ⚠️ 不能直接赋值：Krafs.Publicizer 只改**编译期**可见性 —— 直调私有 setter
+    /// 编译得通过、运行期抛 MethodAccessException。反射调用私有 setter 则始终可用，
+    /// 且本方法自身不抛异常。
     /// </summary>
     private static bool TrySetShouldSave(bool value)
     {
@@ -430,21 +425,20 @@ internal static class RestartService
     }
 
     /// <summary>
-    /// 恢复对局场景（复刻官方 <c>NGame.LoadRun</c> 的前半段），**但跳过 LoadIntoLatestMapCoord**。
+    /// 恢复对局场景（等价于 <c>NGame.LoadRun</c> 的前半段），**但不走 <c>LoadIntoLatestMapCoord</c>**。
     /// <para>⚠️ 为什么要复刻：官方 <c>LoadRun</c> 内部的 <c>LoadIntoLatestMapCoord</c> 会按
     /// <c>VisitedMapCoords[^1]</c> "重进最后访问的那个节点"，而 <c>EnterMapPointInternal</c> 在
     /// <c>preFinishedRoom == null</c> 时会 <c>AppendToMapPointHistory</c>（往地图点历史追加新的一格）
-    /// 并按节点类型重新 roll/新建房间 —— 玩家实测反馈的"每次刀下留人都会前进一层"即由此而来
-    /// （地图位置/历史被凭空推进一格）。</para>
+    /// 会 <c>AppendToMapPointHistory</c> 追加一格并按节点类型重新 roll/新建房间
+    /// —— 表现就是"回滚一次，地图自己前进一层"。</para>
     /// <para>落点由调用方决定：<c>EnterRoom(new MapRoom())</c> 停在地图屏，或
     /// <c>EnterMapPointInternal(...)</c> 重新进入指定节点（见 <see cref="EnterRoomAgainAsync"/>）。</para>
     /// </summary>
     private static async Task RestoreRunSceneAsync(RunState runState)
     {
-        // 官方 NGame.LoadMainMenu 在切场景前会先等"进行中的存档写入"完成
-        //（日志原话："Saving in progress, waiting for it to be finished before loading the main menu"）。
-        // 直接路径跳过了主菜单，这道等待必须自己补 —— 否则切场景/换 run 会与游戏正在写的
-        // current_run.save 并发（CleanUp 已把 State 置空，在途任务的后续步骤可能读到空状态）。
+        // 游戏在切场景前会先等"进行中的存档写入"完成。直接路径跳过了主菜单，这道
+        // 等待必须自己补 —— 否则切场景/换 run 会与正在写 current_run.save 的任务并发
+        // （CleanUp 已把 State 置空，在途任务的后续步骤可能读到空状态）。
         await WaitForPendingSaveAsync();
 
         await PreloadManager.LoadRunAssets(runState.Players.Select(p => p.Character));
@@ -453,7 +447,7 @@ internal static class RestartService
         NGame.Instance!.RootSceneContainer.SetCurrentScene(NRun.Create(runState));
         await RunManager.Instance.GenerateMap();
 
-        // 官方 LoadRun 的收尾一步（GenerateMap 里 SetMap(clearDrawings:true) 会清空涂鸦，之后才回填）。
+        // 读档收尾的一步（GenerateMap 里 SetMap(clearDrawings:true) 会清空涂鸦，之后才回填）。
         // 漏了它 = 每次回滚都把玩家在地图上的手绘标记弄丢，且 MapDrawingsToLoad 一直挂在实例上没人消费。
         LoadMapDrawings();
     }
@@ -475,7 +469,7 @@ internal static class RestartService
         }
     }
 
-    /// <summary>回填存档里的地图手绘标记（与官方 NGame.LoadRun 同一处理）。</summary>
+    /// <summary>回填存档里的地图手绘标记（与 <c>NGame.LoadRun</c> 的收尾同一步）。</summary>
     private static void LoadMapDrawings()
     {
         try
@@ -552,7 +546,7 @@ internal static class RestartService
         }
     }
 
-    /// <summary>④ 分段耗时日志（验收直接路径收益用；t0=起点 GetTicksMsec）。</summary>
+    /// <summary>分段耗时日志（用于确认直接路径的收益；t0 = 起点 GetTicksMsec）。</summary>
     private static void LogStep(string tag, long startMs, string name)
     {
         Entry.Logger?.Info($"[QuickRestart] ⏱ {tag} · {name} = {(long)Time.GetTicksMsec() - startMs}ms");
@@ -560,10 +554,10 @@ internal static class RestartService
 
     /// <summary>
     /// 直接路径收尾：恢复全屏转场（去掉黑幕）。
-    /// ⚠️ LoadRun / StartNewSingleplayerRun **自身不负责淡入** —— 官方调用点全部在之后手动
-    /// `Transition.FadeIn()`（如 NMainMenu 继续游戏：FadeOut → LoadRun → FadeIn）。
-    /// 旧路径之所以不黑屏，是因为主菜单场景 _Ready 里会自己 FadeIn；跳过主菜单后必须由我们补齐，
-    /// 否则全屏黑幕（Transition 的 threshold=1）永久不恢复 = 一直黑屏（2026-09-15 实测踩坑）。
+    /// ⚠️ LoadRun / StartNewSingleplayerRun **自身不负责淡入**，调用点都在之后手动
+    /// <c>Transition.FadeIn()</c>（继续游戏即 FadeOut → LoadRun → FadeIn）。
+    /// 走主菜单时由主菜单场景自己 FadeIn；跳过主菜单就必须由我们补齐，
+    /// 否则全屏黑幕（Transition 的 threshold=1）永不恢复 = 一直黑屏。
     /// 失败只记警告：读档本身已成功，不回退。
     /// </summary>
     private static async Task FadeInSafeAsync(string tag)
@@ -616,9 +610,9 @@ internal static class RestartService
 
         // ══════════════════════════════════════════════════════════════════
         // canonical 模型：RunState 里的 Acts / Modifiers / Character 是 **mutable** 实例，
-        // 而 StartNewSingleplayerRun 内部会对入参做 ToMutable()（要求规范实例），
-        // 直接传 mutable 会抛 MutableModelException —— 这是旧版"重启本局"点击即失败的根因。
-        // 正确取法：ModelDb.GetByIdOrNull<T>(id)（游戏内部同款用法，见 ActModel.FromSave）。
+        // 而 StartNewSingleplayerRun 会对入参再 ToMutable()（要求规范实例），
+        // 直接传 mutable 会抛 MutableModelException。
+        // 正确取法：ModelDb.GetByIdOrNull<T>(id)。
         // ══════════════════════════════════════════════════════════════════
         var character = ModelDb.GetByIdOrNull<CharacterModel>(player.Character.Id);
         if (character == null)
@@ -657,7 +651,7 @@ internal static class RestartService
         string? sameRunSeed = sameSeed ? state.Rng.StringSeed : null;
         if (sameSeed && string.IsNullOrEmpty(sameRunSeed))
         {
-            // ⚠️ RunRngSet.StringSeed 在部分路径下为空（同 RoomEntryTracker 里跨局判据踩过的坑）：
+            // ⚠️ RunRngSet.StringSeed 在部分路径下为空：
             //   此时"同种子重开"无从谈起，用新随机种子顶上并如实告知，别把空串当种子传给新局。
             Entry.Logger?.Warn("[QuickRestart] 当前局种子为空，无法同种子重开 → 本次改用新随机种子");
             ModToast.Show("未能取到本局种子，已改用新种子开局");
@@ -671,7 +665,7 @@ internal static class RestartService
         ClosePauseMenu();
 
         // ══════════════════════════════════════════════════════════════════
-        // 无痕重启（用户要求）：旧局不得写入 run 历史、不得中断连胜、不记成就。
+        // 无痕重启：旧局不得写入 run 历史、不得中断连胜、不记成就。
         // RunManager.OnEnded() 的战绩写入（UpdateProgressWithRunData 连胜 /
         // CreateRunHistoryEntry 历史 / AchievementsHelper 成就 / 指标上传 / 删档）
         // 都包在 `if (ShouldSave)` 里 —— 重开期间把 ShouldSave 置 false，旧局即"无痕消失"。
@@ -690,7 +684,7 @@ internal static class RestartService
         if (!suppressed)
         {
             // 反射失败 = 无痕保护失效：旧局会正常写入历史并可能断连胜。静默降级是玩家最难察觉的一种坏，
-            // 必须当场说清楚（日志 + 屏幕提示），让反馈里能一眼看到根因。
+            // 必须当场说清楚（日志 + 屏幕提示）。
             Entry.Logger?.Error("[QuickRestart] 无法关闭 ShouldSave：本次重启的无痕保护不会生效（旧局可能写入历史/断连胜）");
             ModToast.Show("警告：无痕保护未生效，旧局可能计入战绩");
         }
@@ -707,9 +701,9 @@ internal static class RestartService
 
             if (SettingsManager.Current.FastRestartSkipMenu)
             {
-                // ④ 直接路径：FadeOut + CleanUp 后直接开新局 —— 跳过主菜单资源预载与场景创建。
+                // 直接路径：FadeOut + CleanUp 后直接开新局 —— 跳过主菜单资源预载与场景创建。
                 //    CleanUp 幂等（State==null 直接 return）、从不调用 OnEnded（无痕靠的就是不走它）、自带 ShouldSave=false。
-                //    任何异常 → 落回下方旧路径（ReturnToMainMenu 全流程），玩家不会卡死。
+                //    任何异常 → 落回下方主菜单路径（ReturnToMainMenu 全流程），玩家不会卡死。
                 try
                 {
                     await NGame.Instance!.Transition.FadeOut(DirectFadeSec);
@@ -739,14 +733,14 @@ internal static class RestartService
                     character, true, acts, modifiers, seed, gameMode, ascension);
             }
 
-            // ③ 等帧优化：新场景已在 StartRun 内 SetCurrentScene 并完成 EnterAct(0)，2 帧确认即可
+            // 等 2 帧确认即可：新场景已在 StartRun 内 SetCurrentScene 并完成 EnterAct(0)
             await WaitFrames(2);
             Entry.Logger?.Info($"[QuickRestart] {tag}完成：旧局未写入历史/未中断连胜（无痕生效={suppressed}） · 总耗时 {(long)Time.GetTicksMsec() - t0}ms（{(direct ? "直接" : "主菜单")}路径）");
         }
         catch (Exception ex)
         {
-            // 保护：恢复动作绝不能抛异常 —— 上一版在这里直接写 ShouldSave（运行时 MethodAccessException），
-            // 二次异常覆盖了原始异常，导致"黑屏但看不到根因"。
+            // 保护：恢复动作绝不能抛异常 —— 二次异常会覆盖原始异常，
+            // 导致"黑屏但看不到根因"。
             if (suppressed)
                 TrySetShouldSave(prevShouldSave);
             Entry.Logger?.Error($"[QuickRestart] 重启本局失败: {ex}");
@@ -808,7 +802,7 @@ internal static class RestartService
     public static async Task RewindToMapAsync()
     {
         // ★ 联机拒绝；每日挑战局**放行**（allowDaily）—— 这是原地回滚，不改种子、不重开局，
-        //   且每日局的"刀下留人"要保留这个出路（用户决定）。联机下两个出路都不给，见 NetGuard。
+        //   且每日局的"刀下留人"要保留这个出路。联机下两个出路都不给，见 NetGuard。
         if (IsBlockedByMode("回到地图", allowDaily: true))
             return;
 
@@ -867,7 +861,7 @@ internal static class RestartService
 
                 if (SettingsManager.Current.FastRestartSkipMenu)
                 {
-                    // ④ 直接路径：FadeOut + CleanUp 后直接读档，跳过主菜单；异常自动回退旧路径。
+                    // 直接路径：FadeOut + CleanUp 后直接读档，跳过主菜单；异常自动回退完整流程。
                     try
                     {
                         // 反序列化与淡出并行（同"重启房间"）
@@ -909,7 +903,7 @@ internal static class RestartService
                     await RunManager.Instance.EnterRoom(new MapRoom());
                 }
 
-                // ③ 等帧优化：LoadRun 已完成场景切换，2 帧确认即可
+                // 等 2 帧确认即可：读档已完成场景切换
                 await WaitFrames(2);
 
                 // 兜底：落点异常（理论上已在 MapRoom）时强制退回地图屏 ——

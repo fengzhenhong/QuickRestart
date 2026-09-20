@@ -6,10 +6,8 @@ namespace QuickRestart;
 public sealed class QuickRestartSettings
 {
     // 四个重启快捷键（可在游戏内"快捷键设置"里改）。
-    // ⚠️ 不要再往这里加"没有读取点的开关/键位"：老版本曾有 RetryCombatKey（战后重新挑战快捷键）
-    //    和 EnableWinStreakProtection（预留）两个字段，前者从未被任何输入处理读取、后者无实现，
-    //    但它们会出现在玩家可编辑的 settings.json 里 —— 玩家照着改自然"没反应"。
-    //    要加字段请同时接上读取点，并在 README 的功能说明里写清效果。
+    // ⚠️ 不要往这里加"没有读取点的开关/键位"：这类字段会出现在玩家可编辑的
+    //    settings.json 里，玩家照着改却毫无效果。要加就同时接上读取点，并在 README 写清效果。
     public string RestartRoomKey { get; set; } = "R";
     public string RestartFloorKey { get; set; } = "F";
     public string RestartRunKey { get; set; } = "T";
@@ -20,7 +18,7 @@ public sealed class QuickRestartSettings
     public bool ShowConfirmationDialog { get; set; } = true;
 
     /// <summary>
-    /// ④ 直接路径开关：重启时跳过主菜单（Transition.FadeOut → CleanUp → 直接读档/开新局），
+    /// 直接路径开关：重启时跳过主菜单（Transition.FadeOut → CleanUp → 直接读档/开新局），
     /// 省掉主菜单资源预载 + 场景创建两步大开销。失败自动回退旧路径（ReturnToMainMenu 全流程）。
     /// </summary>
     public bool FastRestartSkipMenu { get; set; } = true;

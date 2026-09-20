@@ -98,6 +98,8 @@
   **但「刀下留人」在每日局照常生效**，只是两个出路的语义不同：【确认】回到地图重新挑战 = 照常原地回滚（不改种子、不重开局）；【取消】放弃本局 = 走游戏官方的"放弃本局"正常结算（不再是普通局那个"无痕同种子重开"，那会丢每日结算依据）
 - **输入环境**：以下情况快捷键不触发（避免误触造成不可逆回滚）—— 游戏窗口失焦、焦点在文本输入框、有模态弹窗打开、开发控制台打开
 - **降级路径**：若"点击节点前"快照不可用（例如房间不是从地图节点进入），重启房间退化为"新建同名房间重进"，此时**只回退血量**、牌序重新随机
+- **刀下留人只在战斗中生效**：两个拦截点都在 `CombatManager`（逐玩家死亡处理与战斗失败标记），所以事件房扣血、诅咒、药水反噬等**战斗外**致死不会被救 —— 这类死亡按游戏官方流程正常结算，不是漏拦截
+- **重启耗时不是都一样的**：回滚类（重启房间 / 本层 / 回到地图）实测约 0.65~0.70 秒；重开整局（重启本局 / 新局）约 2.5 秒，耗时大头是游戏的角色/幕资源预载与地图生成，不是黑幕动画
 
 ## 更新记录
 
@@ -145,6 +147,8 @@
 - "重启本局"在取不到本局种子时改为明示"已改用新种子开局"，不再把空种子传给新局。
 - 重启本层同样在回滚期间暂停快照记录（与重启房间/回到地图一致），不再把正确性押在"同局同幕"字段相等上。
 - 删除两个从未生效的配置字段：`RetryCombatKey`、`EnableWinStreakProtection`（旧配置文件里残留的值会被忽略）。
+- 文档与诊断对齐实现：重启耗时按实测分两档写清（回滚≈0.7s / 重开整局≈2.5s）、补上"刀下留人只在战斗中生效"的范围说明、"补记选路前快照"的日志不再把新局误写成读档继续。
+- 仓库补齐 MIT LICENSE 与 `.gitattributes`（源码统一 LF，避免别人 clone 后一行改动变成整文件 diff），构建章节补上 `-p:CopyModOnBuild=false` 与游戏更新后改 `RitsuLibDir` 的说明。
 - 显示名统一为**回溯之镜**（与游戏内一直显示的名字一致；此前发布包文件名/文档文件名写作"境"，v0.1.6 起也改回"镜"。MOD 目录与 DLL 仍为英文 `QuickRestart`，不受影响）。
 
 ### v0.1.5 · 2026-09-15
@@ -271,6 +275,27 @@ dotnet build QuickRestart.csproj -c Release
 
 构建产物自动复制到 `$(ModOutputDir)`（默认：游戏目录下 `mods/QuickRestart`）。
 
+| 想做什么 | 命令 |
+|---|---|
+| 只验证能否编译、**不碰** `mods/` | `dotnet build -c Release -p:CopyModOnBuild=false` |
+| 正常构建并部署到 `mods/` | `dotnet build -c Release` |
+
+> ⚠️ 不要用 `dotnet build -t:Compile` 做验证 —— 它绕过完整构建链、破坏 `obj/` 增量，
+> 会让嵌入资源与后续复制步骤丢失（要恢复得删 `obj/`、`bin/` 重新构建）。
+>
+> ⚠️ **游戏版本更新后构建失败**（报"找不到 RitsuLib"）多半是 `local.props` 里的
+> `RitsuLibDir` 还指着旧的 compat 目录。RitsuLib 0.6.x 按游戏 API 版本分目录，
+> 改成新版本即可：`mods/STS2-RitsuLib/compat/<游戏API版本>`（例如 `0.111.0`）。
+> 工程里的 `ValidateSts2GameInstall` 会在校验不到 `sts2.dll` / `STS2-RitsuLib.dll` 时
+> 直接终止构建，属于刻意设计（宁可编译不也不要装一个跑不起来的 DLL）。
+>
+> ℹ️ 反射依赖提示：本工程用 Krafs.Publicizer 放开游戏内部成员，但它**只改编译期可见性** ——
+> 私有成员直调会在运行期抛 `MethodAccessException` / `FieldAccessException`。
+> 因此 `RunManager.ShouldSave` 的 setter 与 `RunManager._startTime` 一律走反射
+>（见 `RestartService.TrySetShouldSave` 与 `RoomEntryTracker.CurrentRunStart` 的注释），
+> 新增反射目标时请沿用这个约定并核对游戏更新后的字段名。
+
 ## 许可
 
-<!-- 待作者添加：如 MIT / GPL-3.0 等 -->
+MIT © 2026 CodeArts —— 详见 [LICENSE](LICENSE)。
+前置库 [STS2-RitsuLib](https://github.com/BAKAOLC/STS2-RitsuLib) 同为 MIT，本模组与它许可兼容。

@@ -177,7 +177,7 @@ internal static class PauseMenuButtonInjector
     private static void OnRestartRoomPressed(NButton btn)
     {
         Entry.Logger?.Info("[QuickRestart] 点击重启房间");
-        // ★ 免确认直接执行（用户要求）：重启房间在练习场景高频使用
+        // ★ 免确认直接执行：重启房间在练习场景高频使用
         _ = RestartService.ExecuteRestart(RestartService.RestartType.RestartRoom);
     }
 

@@ -61,10 +61,12 @@ internal static class RoomEntryTracker
     }
 
     /// <summary>
-    /// 兜底补记"选路前"快照。场景：**读档继续游戏** —— 本次会话从未"点地图节点"，
-    /// <see cref="PreMapPointSnapshot"/> 为空（或残留上一局），此时「回到地图」会退化成"重启房间"、
-    /// 「重启房间」会退化成"重建房间（牌序重随机）"。在地图屏就绪（SetMap）时若快照缺失或失效，
-    /// 就用当前状态（读档恢复点）补记。正常游玩时快照有效 → 本方法不动它（不覆盖真正的"点节点前"状态）。
+    /// 兜底补记"选路前"快照。两种情况下会缺：
+    /// ① 读档继续游戏 —— 本次会话从未"点地图节点"（或只残留上一局的快照）；
+    /// ② 本 mod 自己开的新局 —— "重启本局/新局"会 <see cref="Reset"/> 掉旧快照。
+    /// 缺了会让「回到地图」退化成"重启房间"、「重启房间」退化成"重建房间（牌序重随机）"。
+    /// 地图屏就绪（SetMap）时用当前状态补记；正常游玩时快照有效 → 不动它，
+    /// 绝不覆盖真正的"点节点前"状态。
     /// </summary>
     public static void EnsurePreMapPointSnapshot()
     {
@@ -84,7 +86,8 @@ internal static class RoomEntryTracker
 
             _preMapPointSnapshot = RunManager.Instance.ToSave(null);
             _preMapPointRunStart = CurrentRunStart();
-            Entry.Logger?.Info("[QuickRestart] 已用当前状态补记「选路前」快照（读档继续游戏：本次会话未经历真实选路）");
+            Entry.Logger?.Info("[QuickRestart] 已用当前状态补记「选路前」快照"
+                + "（原因：本次会话尚未经历真实选路 —— 读档继续游戏 / 刚开的新局；或旧快照被主动清空）");
         }
         catch (Exception ex)
         {
@@ -161,9 +164,8 @@ internal static class RoomEntryTracker
     /// 当前局的开始时间戳（RunManager 私有字段 `_startTime`：同局恒定、读档由存档复原、跨局必不同）。
     /// <para>⚠️ **必须反射读**：Krafs.Publicizer 只改**编译期**签名 —— 直接写
     /// <c>RunManager.Instance._startTime</c> 编译通过、运行期抛 FieldAccessException
-    /// （与 <c>RunManager.ShouldSave</c> setter 的 MethodAccessException 同一坑；2026-09-15 日志实证
-    /// "Attempt by method '...CurrentRunStart()' to access field '...RunManager._startTime' failed"）。
-    /// 该异常曾让局标识恒 0 → 所有跨局校验恒失败 → 重启房间/本层/回到地图全部退化。反射则始终可用。</para>
+    /// （与 <c>RunManager.ShouldSave</c> setter 的 MethodAccessException 同一类坑）。
+    /// 该异常会让局标识恒 0 → 所有跨局校验恒失败 → 重启房间/本层/回到地图全部退化。
     /// 字段缺失或读取失败返回 0（调用方走降级路径，绝不因此让功能整体失效）。
     /// </summary>
     internal static long CurrentRunStart()
@@ -198,9 +200,9 @@ internal static class RoomEntryTracker
     /// <summary>
     /// 校验快照是否属于当前局。跨局残留防护：快照只在 mod 主动"重启本局/新局"时 Reset，
     /// 玩家走游戏自带流程（死亡/通关后重开）开新局时旧局快照仍残留 —— 不校验会把新局回滚到旧局状态。
-    /// <para>判据 = **局开始时间戳**（同局恒定、跨局必不同）。⚠️ 不再用种子字符串比对：
+    /// <para>判据 = **局开始时间戳**（同局恒定、跨局必不同），不用种子字符串比对：
     /// <c>RunRngSet.StringSeed</c> 在部分路径下可能为空，会让同局快照被误判为"上一局"，
-    /// 导致"重启本层"静默降级为"仅重进本幕"（2026-09-15 实测踩坑）。</para>
+    /// 会让同局快照被误判为"上一局"、功能静默降级。</para>
     /// <para>失败时打印两边实际值（诊断），避免静默降级难以排查。</para>
     /// </summary>
     public static bool IsSnapshotForCurrentRun(SerializableRun? snapshot, long capturedRunStart, string what)
@@ -221,7 +223,7 @@ internal static class RoomEntryTracker
         }
 
         // 局标识不可用（任一侧为 0）→ 降级为种子比对；种子也取不到则放行（功能优先）。
-        // ⚠️ 严格拒绝会让所有功能退化（2026-09-15 实测：标识恒 0 → 重启房间变"牌序重随机重开"、
+        // ⚠️ 严格拒绝会让所有功能退化（标识恒 0 时：重启房间变"牌序重随机重开"、
         //    重启本层变"仅重进本幕"、刀下留人变"重启房间"）；放行的残余风险（跨局残留）只在
         //    "标识不可用 + 种子缺失"双重异常下才出现，远小于功能全废的代价。
         string? snapSeed = snapshot.SerializableRng?.Seed;
