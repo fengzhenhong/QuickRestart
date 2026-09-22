@@ -219,9 +219,20 @@ internal sealed class PlayerDeathInterceptPatch : IPatchMethod
         [new(typeof(CombatManager), nameof(CombatManager.HandlePlayerDeath), new[] { typeof(CombatId?), typeof(Player) })];
 
     [HarmonyPriority(Priority.First)]
-    public static bool Prefix()
+    public static bool Prefix(ref Task __result)
     {
-        return !DeathInterceptCore.TryIntercept("HandlePlayerDeath");
+        if (!DeathInterceptCore.TryIntercept("HandlePlayerDeath"))
+            return true;
+
+        // ★★ 必须补 __result —— 这是 async Task 方法，跳过时 Harmony 会把返回值留成 null，
+        //    而调用方是 `await CombatManager.Instance.HandlePlayerDeath(...)`
+        //    （CreatureCmd.KillWithoutCheckingWinCondition 内），await null 直接抛
+        //    NullReferenceException，异常沿 Kill → Damage → 回合循环一路上抛，
+        //    把整场战斗的 turn loop 打死（日志：`Combat #N turn loop died ... the combat is
+        //    stuck until the room is restarted`）。2026-09-22 实测：每次刀下留人都必然触发一次。
+        //    返回一个已完成任务，语义 = "死亡处理照常做完（只是没做事）"。
+        __result = Task.CompletedTask;
+        return false;
     }
 }
 

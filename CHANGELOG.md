@@ -21,6 +21,14 @@
   预检通过时也留一行日志（`关键场景预检通过`）：v0.1.7 的教训正是"这道防线到底有没有生效"在日志里查不到，只能靠"有没有崩"反推。
   **真机验证（2026-09-22 22:34 会话，v0.1.8）**：`重启房间` ×2、`重启本层` ×1、`重启本局` ×2、`重启新局` ×3、`换角色开新局` ×3 全部**成功完成**，且全部走**直接路径**（`回退主菜单路径` 计数为 0 = 预检从未误拦）；重启本层 637ms、重启房间 ~863ms、重启本局 ~2.5s、换角色 ~1.35s；`FATAL` / `p_index` / `cowdata` 均为 **0**，回溯之镜自身 WARN/ERROR 也是 **0**（v0.1.7 同场景下按 F 重启本层必崩）。
 
+- **「刀下留人」每次都会打死战斗回合循环**：`CombatManager.HandlePlayerDeath` 是 **`async Task`** 方法，而拦截用的 Prefix 只返回 `bool`、**没有补 `ref Task __result`** —— 拦截时 Harmony 把返回值留成 `null`，而游戏内部的调用点是 `await CombatManager.Instance.HandlePlayerDeath(...)`（`CreatureCmd.KillWithoutCheckingWinCondition` 里），`await null` 直接抛 `NullReferenceException`，异常沿 `Kill → Damage` 一路上抛，于是**每次救人都必然打死一次回合循环**：
+  ```
+  [ERROR] Combat #N turn loop died while its combat is in progress;
+          the combat is stuck until the room is restarted: System.NullReferenceException
+  ```
+  不只是日志难看：若弹窗恰好没能显示，代码会走"解除暂停继续战斗"的兜底 —— 而循环已死，战斗会**永久冻结**，正好是这功能本该消灭的那种失败。现在 Prefix 补 `ref Task __result`，拦截时返回 `Task.CompletedTask`（语义 = 死亡处理照常"做完"，只是没做事）。
+  **真机证据**：修复前一次会话内 `刀下留人拦截 ×4` ↔ `turn loop died ×4`（完全 1:1，4 次是玩家主动测试死亡）。修复后的效果**尚待实机复测**：按同样方式再死一次，日志不应再出现 `turn loop died`，且应看到救人与回滚照常完成。
+
 ## [0.1.7] - 2026-09-22
 
 ### 新增
