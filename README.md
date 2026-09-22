@@ -1,6 +1,6 @@
-<img width="359" height="486" alt="回溯之镜" 源代码="https://github.com/user-attachments/assets/0f0b5733-8b5b-42bc-bd2d-55e6aa953d02" />![正在上传 回溯之镜.png…]()
-# 回溯之镜（QuickRestart）
+<img width="359" height="486" alt="回溯之镜" 源代码="https://github.com/user-attachments/assets/4d4afce9-982e-49ca-b21a-da4341f4cdca" /># 回溯之镜（QuickRestart）
 
+![正在上传 回溯之镜.png…]()
 
 《杀戮尖塔 2》练习与救场模组 —— 把「重来」做到极致：从重开一个房间到重开整局，全部基于**完整运行快照回滚**，牌序与随机数精确重现。
 
