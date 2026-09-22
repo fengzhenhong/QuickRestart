@@ -24,7 +24,7 @@ public static class Entry
     /// （csproj 关了程序集信息生成），产物 AssemblyVersion 恒为 0.0.0.0，
     /// 日志里永远看不到"线上跑的到底是哪一版"。改代码必须同时改这一个常量与 json。</para>
     /// </summary>
-    public const string ModVersion = "0.1.6";
+    public const string ModVersion = "0.1.8";
 
     public static MegaCrit.Sts2.Core.Logging.Logger Logger { get; private set; } = null!;
     public static bool Enabled { get; private set; } = true;

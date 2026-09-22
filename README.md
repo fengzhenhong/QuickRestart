@@ -20,6 +20,12 @@
 | **重启本局** | 同一种子从头重开 —— 无痕保护（见下）|
 | **重启新局** | 同角色、新随机种子全新开局 |
 
+### 换角色开新局
+
+暂停菜单里的第五个按钮：**无痕丢弃当前局 → 回主菜单 → 直接停在游戏自己的角色选择屏**，在那里换角色 / 进阶 / 幕数配置重开一局。"怎么开局"完全交给游戏本体（与手点「单人游戏 → 新游戏」同一条路径），模组只负责送你过去。
+
+> 代价：走一次主菜单，比直接路径慢约 1 秒；**当前局的存档会被删除**，之后无法用「继续游戏」回到这一局。无快捷键；每日挑战局与联机对局不显示该按钮。
+
 ### 刀下留人
 
 生命归零时弹出「刀下留人」弹窗，战斗冻结：
@@ -50,7 +56,7 @@
 
 ## 无痕保护
 
-所有重启操作（房间 / 本层 / 本局 / 新局）与刀下留人，**都不会污染你的战绩**：
+所有重启操作（房间 / 本层 / 本局 / 新局）、换角色开新局与刀下留人，**都不会污染你的战绩**：
 
 - **不增加失败** —— 被重启的旧局面不会写入挑战历史，不会被记为一次失败
 - **不断连胜** —— 连胜（win streak）不会因重启而中断
@@ -107,7 +113,7 @@
 ## 更新记录
 
 完整版本历史已独立成 **[CHANGELOG.md](CHANGELOG.md)**（按版本倒序、分「新增 / 变更 / 修复 / 移除」类别）。
-本文件不再重复记录，避免两处说明各说各话；当前版本：**0.1.6**（2026-09-19）。
+本文件不再重复记录，避免两处说明各说各话；当前版本：**0.1.8**（2026-09-22）。
 
 ## 从源码构建
 
@@ -118,9 +124,22 @@ QuickRestart/
 ├── QuickRestart.csproj      ← 工程文件必须在仓库根（见下）
 ├── QuickRestart.json        ← 加载器清单（MOD 身份是英文 id "QuickRestart"，显示名「回溯之镜」在 json 里）
 ├── README.md / CHANGELOG.md / LICENSE / .gitignore / .gitattributes / local.props.example
-├── src/                     ← 全部 C# 源码（18 个 .cs）
-└── docs/Features.md         ← 玩家向功能说明与已知限制
+├── docs/Features.md         ← 玩家向功能说明与已知限制
+└── src/                     ← 全部 C# 源码，统一单一命名空间 QuickRestart
+    ├── Entry.cs                 mod 入口：装补丁、启停、日志里的版本号常量
+    ├── SettingsManager.cs       配置读写（settings.json，原子写）
+    ├── NetGuard.cs              联机 / 每日挑战局守卫
+    ├── Patches/                 挂在游戏方法上的 Harmony 补丁（含死亡拦截、菜单与按钮注入、快照记录钩子）
+    ├── Restart/                 重启与回滚流程（RestartService 的 partial 分工，见下）
+    ├── Snapshots/               选路前 / 幕初快照 + 磁盘持久化
+    └── UI/                      过场黑幕、屏幕提示、快捷键面板、原生确认弹窗
 ```
+
+> `RestartService` 是 `internal static partial class`，按职责分成七个文件：`RestartService.cs`（守卫 + 房间 / 本层）、
+> `.Restore.cs`（回滚骨架 + 把 RunState 交回游戏读档）、`.NewRun.cs`（重开整局与换角色）、`.Rewind.cs`（战后重挑战与回到地图）、
+> `.Scene.cs`（淡入淡出与计时）、`.GameApi.cs`（ShouldSave 反射等最小封装）、
+> `.AssetGuard.cs`（建 run 场景前的资源预检 —— 直接路径跳过主菜单，这一步的竞态会让 Godot 原生崩进程）。
+> **新增流程请开新 partial 文件**，别把 `RestartService.cs` 重新写成大杂烩。
 
 > ⚠️ **别把 `QuickRestart.csproj` 挪进 `src/`** —— 本工程用 `Godot.NET.Sdk`，它以 csproj 所在目录为项目根
 > （`.godot/` 与编译中间目录都挂在那儿），另外 csproj 里有两处按仓库根算的相对路径：

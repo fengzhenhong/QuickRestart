@@ -13,7 +13,7 @@ namespace QuickRestart;
 internal sealed class PauseMenuReadyPatch : IPatchMethod
 {
     public static string PatchId => "quick_restart_pause_menu_ready";
-    public static string Description => "暂停菜单就绪后注入四类重启按钮";
+    public static string Description => "暂停菜单就绪后注入重启与换角色按钮";
 
     public static ModPatchTarget[] GetTargets() =>
         [new(typeof(NPauseMenu), "_Ready", Type.EmptyTypes)];
@@ -60,6 +60,7 @@ internal static class PauseMenuButtonInjector
         ("RestartFloor", "重启本层", OnRestartFloorPressed),
         ("RestartRun", "重启本局", OnRestartRunPressed),
         ("NewRun", "重启新局", OnNewRunPressed),
+        ("SwitchCharacter", "换角色开新局", OnSwitchCharacterPressed),
         ("KeyBinds", "快捷键设置", OnKeyBindsPressed),
     ];
 
@@ -204,6 +205,14 @@ internal static class PauseMenuButtonInjector
         Entry.Logger?.Info("[QuickRestart] 点击重启新局");
         ConfirmPopupHelper.ShowConfirm("重启新局", "确认同角色新随机种子全新开局？",
             () => _ = RestartService.ExecuteRestart(RestartService.RestartType.NewRun));
+    }
+
+    private static void OnSwitchCharacterPressed(NButton btn)
+    {
+        Entry.Logger?.Info("[QuickRestart] 点击换角色开新局");
+        ConfirmPopupHelper.ShowConfirm("换角色开新局",
+            "确认丢弃当前局面、回到角色选择界面？\n（本局不写入战绩，但存档会被删除，无法用「继续游戏」找回）",
+            () => _ = RestartService.ExecuteRestart(RestartService.RestartType.SwitchCharacter));
     }
 
     private static void OnKeyBindsPressed(NButton btn)
