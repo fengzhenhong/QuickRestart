@@ -82,7 +82,7 @@ internal static partial class RestartService
             // ⚠️ RunRngSet.StringSeed 在部分路径下为空：
             //   此时"同种子重开"无从谈起，用新随机种子顶上并如实告知，别把空串当种子传给新局。
             Entry.Logger?.Warn("[QuickRestart] 当前局种子为空，无法同种子重开 → 本次改用新随机种子");
-            ModToast.Show("未能取到本局种子，已改用新种子开局");
+            ModToast.Show(ModLoc.ToastNoSeed);
             sameRunSeed = null;
         }
 
@@ -114,7 +114,7 @@ internal static partial class RestartService
             // 反射失败 = 无痕保护失效：旧局会正常写入历史并可能断连胜。静默降级是玩家最难察觉的一种坏，
             // 必须当场说清楚（日志 + 屏幕提示）。
             Entry.Logger?.Error("[QuickRestart] 无法关闭 ShouldSave：本次重启的无痕保护不会生效（旧局可能写入历史/断连胜）");
-            ModToast.Show("警告：无痕保护未生效，旧局可能计入战绩");
+            ModToast.Show(ModLoc.ToastNoTraceProtectionFailed);
         }
 
         // 新局：旧局的幕快照与进房前快照作废（新局 Act 0 的地图屏就绪后会重新记录）
@@ -224,7 +224,7 @@ internal static partial class RestartService
         if (!suppressed)
         {
             Entry.Logger?.Error($"[QuickRestart] {tag}：无法关闭 ShouldSave，本局可能写入历史/断连胜");
-            ModToast.Show("警告：无痕保护未生效，本局可能计入战绩");
+            ModToast.Show(ModLoc.ToastNoTraceProtectionFailedThisRun);
         }
 
         ActSnapshotStore.Reset();
@@ -262,8 +262,8 @@ internal static partial class RestartService
             if (suppressed && runStillAlive)
                 TrySetShouldSave(prevShouldSave);
             ModToast.Show(runStillAlive
-                ? "换角色未成功，本局保持不变"
-                : "换角色未成功，本局已丢弃，请重启游戏继续");
+                ? ModLoc.ToastSwitchCharacterFailedKeptRun
+                : ModLoc.ToastSwitchCharacterFailedRunLost);
         }
         finally
         {
@@ -279,7 +279,7 @@ internal static partial class RestartService
         if (stack == null)
         {
             Entry.Logger?.Warn("[QuickRestart] 主菜单未就绪，停在主菜单（请手动进入 单人游戏→新游戏）");
-            ModToast.Show("已回到主菜单，请点「单人游戏 → 新游戏」选角色");
+            ModToast.Show(ModLoc.ToastMainMenuNotReady);
             return;
         }
 

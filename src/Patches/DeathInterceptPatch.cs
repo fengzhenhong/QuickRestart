@@ -130,9 +130,7 @@ internal static class DeathInterceptCore
             bool daily = state.GameMode == GameMode.Daily;
 
             bool popupShown = ConfirmPopupHelper.ShowDeathInterceptPopup(
-                daily
-                    ? "生命归零！\n【确认】回到地图重新挑战（进本房间前）\n【取消】放弃本局（按游戏正常流程结算本次失败）"
-                    : "生命归零！\n【确认】回到地图重新挑战（进本房间前）\n【取消】放弃本局（同一种子从头重开）",
+                daily ? ModLoc.DeathInterceptDaily : ModLoc.DeathInterceptNormal,
                 onRetry: () =>
                 {
                     _isIntercepting = false;

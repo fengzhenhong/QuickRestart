@@ -55,22 +55,22 @@ internal sealed class RunInputPatch : IPatchMethod
 
         if (KeyBindPanel.IsKeyMatch(key, settings.RestartRoomKey))
         {
-            action = "重启房间";
+            action = ModLoc.RestartRoom;
             restartType = RestartService.RestartType.RestartRoom;
         }
         else if (KeyBindPanel.IsKeyMatch(key, settings.RestartFloorKey))
         {
-            action = "重启本层";
+            action = ModLoc.RestartFloor;
             restartType = RestartService.RestartType.RestartFloor;
         }
         else if (KeyBindPanel.IsKeyMatch(key, settings.RestartRunKey))
         {
-            action = "重启本局";
+            action = ModLoc.RestartRun;
             restartType = RestartService.RestartType.RestartRun;
         }
         else if (KeyBindPanel.IsKeyMatch(key, settings.NewRunKey))
         {
-            action = "重启新局";
+            action = ModLoc.NewRun;
             restartType = RestartService.RestartType.NewRun;
         }
 
@@ -105,7 +105,7 @@ internal sealed class RunInputPatch : IPatchMethod
             return;
         }
 
-        ConfirmPopupHelper.ShowConfirm(action, $"确认{action}？",
+        ConfirmPopupHelper.ShowConfirm(action, ModLoc.ConfirmAction(action),
             () => _ = RestartService.ExecuteRestart(type));
     }
 
@@ -117,7 +117,7 @@ internal sealed class RunInputPatch : IPatchMethod
         // 1) 窗口失焦：Alt-Tab 出去在别的程序里打字，Godot 仍可能把按键送进 _Input
         if (!NGame.IsGameFocusedWindow())
         {
-            reason = "游戏窗口未获焦";
+            reason = ModLoc.ReasonWindowNotFocused;
             return true;
         }
 
@@ -125,14 +125,14 @@ internal sealed class RunInputPatch : IPatchMethod
         Control? focus = NGame.Instance?.GetWindow()?.GuiGetFocusOwner();
         if (focus is TextEdit or LineEdit)
         {
-            reason = "焦点在文本输入框";
+            reason = ModLoc.ReasonTextFocus;
             return true;
         }
 
         // 3) 有模态弹窗开着（含我方"刀下留人"与确认框）：此时触发重启会与弹窗选择互相打架
         if (NModalContainer.Instance?.OpenModal != null)
         {
-            reason = "有模态弹窗打开";
+            reason = ModLoc.ReasonModalOpen;
             return true;
         }
 

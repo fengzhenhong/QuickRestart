@@ -67,7 +67,7 @@ internal static class RetryButtonInjector
         _retryButton = new Button
         {
             Name = "RetryCombatButton",
-            Text = "重新挑战",
+            Text = ModLoc.ConfirmTitle(RestartKind.PostCombatRetry),
             // Always：战斗结算/暂停状态下按钮也要可点击。
             // ⚠️ 勿用整型字面量：Godot 枚举实际为 Inherit=0/Pausable=1/WhenPaused=2/Always=3/Disabled=4，
             //    写成 4 就是 Disabled —— Control 收不到任何输入，按钮永远点不动。
@@ -92,7 +92,8 @@ internal static class RetryButtonInjector
     private static void OnRetryPressed()
     {
         Entry.Logger?.Info("[QuickRestart] 点击重新挑战");
-        ConfirmPopupHelper.ShowConfirm("重新挑战", "确认放弃战利品，重新挑战本场战斗？",
+        ConfirmPopupHelper.ShowConfirm(ModLoc.ConfirmTitle(RestartKind.PostCombatRetry),
+            ModLoc.ConfirmPostCombatRetry,
             () => _ = RestartService.RetryCombatAsync());
     }
 

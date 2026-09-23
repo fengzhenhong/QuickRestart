@@ -79,26 +79,35 @@ internal static class KeyBindPanel
             vbox.AddThemeConstantOverride("separation", 8);
             panel.AddChild(vbox);
 
-            var title = new MegaLabel { Text = "快捷键设置" };
+            // ★ MegaLabel 的 _Ready 里 MegaLabelHelper.AssertThemeFontOverride 会在
+            //   "没有 theme 字体覆盖"时**直接抛异常**（游戏为规避 Godot 退出期挂起 bug 刻意加的断言）。
+            //   游戏自己的 MegaLabel 靠 .tscn 携带字体覆盖才通过；我们代码手建的必须自己补，
+            //   否则面板一 AddChild 就抛 → 被下面的 catch 吃掉 → 表现为"点快捷键设置没反应"。
+            //   顺带这也让字体跟随游戏当前语言（见 ModFonts）。
+            Control? probe = ModFonts.FindProbe(menu);
+
+            var title = new MegaLabel { Text = ModLoc.KeyBindTitle };
             title.HorizontalAlignment = HorizontalAlignment.Center;
+            ModFonts.ApplyGameFont(title, probe);
             vbox.AddChild(title);
 
-            var hint = new MegaLabel { Text = "点击一行，再按下新按键（Esc 取消）" };
+            var hint = new MegaLabel { Text = ModLoc.KeyBindHint };
             hint.HorizontalAlignment = HorizontalAlignment.Center;
             hint.Modulate = new Color(0.75f, 0.78f, 0.85f);
+            ModFonts.ApplyGameFont(hint, probe);
             vbox.AddChild(hint);
 
             Rows.Clear();
-            AddRow(vbox, template, BindTarget.Room, "重启房间");
-            AddRow(vbox, template, BindTarget.Floor, "重启本层");
-            AddRow(vbox, template, BindTarget.Run, "重启本局");
-            AddRow(vbox, template, BindTarget.NewRun, "重启新局");
+            AddRow(vbox, template, BindTarget.Room, ModLoc.RestartRoom);
+            AddRow(vbox, template, BindTarget.Floor, ModLoc.RestartFloor);
+            AddRow(vbox, template, BindTarget.Run, ModLoc.RestartRun);
+            AddRow(vbox, template, BindTarget.NewRun, ModLoc.NewRun);
 
             var closeBtn = template.Duplicate() as NPauseMenuButton;
             if (closeBtn != null)
             {
                 closeBtn.Name = "Close";
-                SetLabel(closeBtn, "关闭");
+                SetLabel(closeBtn, ModLoc.Close);
                 closeBtn.Visible = true;
                 closeBtn.Connect(NClickableControl.SignalName.Released, Callable.From<NButton>(_ => Close()));
                 vbox.AddChild(closeBtn);
@@ -187,18 +196,19 @@ internal static class KeyBindPanel
         foreach (var (target, btn) in Rows)
         {
             string text = _awaiting == target
-                ? $"{LabelOf(target)}    按下新按键…（Esc 取消）"
-                : $"{LabelOf(target)}    {GetKey(target)}";
+                ? ModLoc.BindRow(LabelOf(target), ModLoc.PressNewKey)
+                : ModLoc.BindRow(LabelOf(target), GetKey(target));
             SetLabel(btn, text);
         }
     }
 
+    // 行文案跟随游戏语言（见 ModLoc）。
     private static string LabelOf(BindTarget target) => target switch
     {
-        BindTarget.Room => "重启房间",
-        BindTarget.Floor => "重启本层",
-        BindTarget.Run => "重启本局",
-        BindTarget.NewRun => "重启新局",
+        BindTarget.Room => ModLoc.RestartRoom,
+        BindTarget.Floor => ModLoc.RestartFloor,
+        BindTarget.Run => ModLoc.RestartRun,
+        BindTarget.NewRun => ModLoc.NewRun,
         _ => target.ToString()
     };
 

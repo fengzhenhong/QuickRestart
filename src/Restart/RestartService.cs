@@ -51,14 +51,14 @@ internal static partial class RestartService
         if (NetGuard.IsMultiplayer())
         {
             Entry.Logger?.Warn($"[QuickRestart] 联机模式下不支持{what}，已忽略");
-            ModToast.Show($"联机模式下不可用（{Entry.ModName}仅支持单人）");
+            ModToast.Show(ModLoc.ToastMultiplayerUnavailable(Entry.ModName));
             return true;
         }
         // 每日挑战：重开类操作拒绝（详见 NetGuard.IsDailyRun）
         if (!allowDaily && NetGuard.IsDailyRun())
         {
             Entry.Logger?.Warn($"[QuickRestart] 每日挑战局不支持{what}，已忽略");
-            ModToast.Show($"每日挑战局不支持{what}");
+            ModToast.Show(ModLoc.ToastDailyUnsupported(what));
             return true;
         }
         return false;
@@ -99,15 +99,16 @@ internal static partial class RestartService
         }
     }
 
-    /// <summary>重启类型 → 玩家可读名称（守卫提示、重入提示与兜底日志共用同一句人话）。</summary>
-    private static string NameOf(RestartType type) => type switch
+    /// <summary>重启类型 → 玩家可读名称（守卫提示、重入提示与兜底日志共用同一句人话）。
+    /// 文案跟随游戏语言，见 <see cref="ModLoc"/>。</summary>
+    private static string NameOf(RestartType type) => ModLoc.ConfirmTitle(type switch
     {
-        RestartType.RestartRoom => "重启房间",
-        RestartType.RestartFloor => "重启本层",
-        RestartType.RestartRun => "重启本局",
-        RestartType.NewRun => "重启新局",
-        _ => "换角色开新局",
-    };
+        RestartType.RestartRoom => RestartKind.RestartRoom,
+        RestartType.RestartFloor => RestartKind.RestartFloor,
+        RestartType.RestartRun => RestartKind.RestartRun,
+        RestartType.NewRun => RestartKind.NewRun,
+        _ => RestartKind.SwitchCharacter,
+    });
 
     public static Task ExecuteRestart(RestartType type) => RunGuardedAsync(NameOf(type), async () =>
     {
@@ -228,7 +229,7 @@ internal static partial class RestartService
         {
             Entry.Logger?.Warn($"[QuickRestart] 注意：本幕快照来自**读档恢复点**（本次会话直接读档继续、未经历真实幕初）—— 重启本层将回滚到「读档时」的状态，而不是本幕开场");
             // 如实告知玩家（游戏存档里没有"本幕开场"数据，读档进入的当幕无法回滚到幕初，只能到读档点）
-            RestartOverlay.SetNote("本幕快照来自读档点：只能回到「读档时」的状态（游戏未保存本幕开场数据）");
+            RestartOverlay.SetNote(ModLoc.NoteSnapshotFromResume);
         }
         Entry.Logger?.Info($"[QuickRestart] 重启本层：回滚到第 {actIndex + 1} 幕快照点（本幕获得的金币/卡牌/遗物/药水/血量将全部回退）");
         ClosePauseMenu();

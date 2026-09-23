@@ -102,7 +102,7 @@ internal static class ConfirmPopupHelper
                 return false;
             }
 
-            Wire(popup, "刀下留人", message,
+            Wire(popup, ModLoc.DeathInterceptTitle, message,
                 new LocString("main_menu_ui", "GENERIC_POPUP.confirm"),
                 new LocString("main_menu_ui", "GENERIC_POPUP.cancel"),
                 onRetry, onAbandon);

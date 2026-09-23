@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Nodes;
 
 namespace QuickRestart;
 
@@ -9,7 +10,7 @@ namespace QuickRestart;
 /// 例如联机模式下按重启快捷键：应明确提示"联机模式下不可用"，而不是静默无反应。</para>
 ///
 /// <para>实现：挂在 <see cref="SceneTree.Root"/> 下的 CanvasLayer（layer=99，不抢鼠标，
-/// ProcessMode=Always 保证暂停/失焦也可见）。系统字体雅黑（Godot 默认字体无 CJK 字形）。
+/// ProcessMode=Always 保证暂停/失焦也可见）。字体跟随游戏当前语言（见 <see cref="ModFonts"/>）。
 /// 任何失败都静默降级（无提示不影响功能）。</para>
 /// </summary>
 internal static class ModToast
@@ -29,6 +30,10 @@ internal static class ModToast
         {
             if (string.IsNullOrEmpty(text) || !EnsureBuilt())
                 return;
+
+            // 本层是常驻 CanvasLayer，而游戏换语言时不会碰模组的层 ——
+            // 每次显示前重解析字体，玩家切完语言后的下一条提示就用新字体（见 ModFonts）。
+            ModFonts.RefreshGameFont(_label!, ResolveProbe());
 
             if (_tween != null && _tween.IsValid())
                 _tween.Kill();
@@ -101,9 +106,8 @@ internal static class ModToast
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
-        // 中文必须用系统字体（Godot 默认字体不含 CJK 字形）
-        _label.AddThemeFontOverride("font",
-            new SystemFont { FontNames = new[] { "Microsoft YaHei UI", "Microsoft YaHei", "SimHei" } });
+        // 字体跟随游戏当前语言（游戏按语言替换字体文件；见 ModFonts 注释）。
+        ModFonts.ApplyGameFont(_label, ResolveProbe());
         _label.AddThemeFontSizeOverride("font_size", 22);
         _label.AddThemeColorOverride("font_color", new Color(1.0f, 0.9f, 0.55f));   // 暖黄，与过场提示的白色区分
         _label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.85f));
@@ -117,4 +121,9 @@ internal static class ModToast
         tree.Root.AddChild(_layer);
         return true;
     }
+
+    /// <summary>当前可用的字体探测点（取游戏场景里的 Label；取不到交给 ModFonts 兜底）。</summary>
+    private static Control? ResolveProbe()
+        => ModFonts.FindProbe(NGame.Instance?.RootSceneContainer)
+           ?? ModFonts.FindProbe(Engine.GetMainLoop() is SceneTree t ? t.Root : null);
 }

@@ -53,15 +53,16 @@ internal sealed class PauseMenuExitPatch : IPatchMethod
 
 internal static class PauseMenuButtonInjector
 {
-    /// <summary>注入用按钮名（同时是"已注入"的判据：重复 _Ready 时按名字复用，不叠加）。</summary>
-    private static readonly (string Name, string Label, Action<NButton> Handler)[] Buttons =
+    /// <summary>注入用按钮名（同时是"已注入"的判据：重复 _Ready 时按名字复用，不叠加）。
+    /// 文案用委托取，这样每次注入都会按**当前**游戏语言解析（见 <see cref="ModLoc"/>）。</summary>
+    private static readonly (string Name, Func<string> Label, Action<NButton> Handler)[] Buttons =
     [
-        ("RestartRoom", "重启房间", OnRestartRoomPressed),
-        ("RestartFloor", "重启本层", OnRestartFloorPressed),
-        ("RestartRun", "重启本局", OnRestartRunPressed),
-        ("NewRun", "重启新局", OnNewRunPressed),
-        ("SwitchCharacter", "换角色开新局", OnSwitchCharacterPressed),
-        ("KeyBinds", "快捷键设置", OnKeyBindsPressed),
+        ("RestartRoom", () => ModLoc.RestartRoom, OnRestartRoomPressed),
+        ("RestartFloor", GetFloorLabel, OnRestartFloorPressed),
+        ("RestartRun", () => ModLoc.RestartRun, OnRestartRunPressed),
+        ("NewRun", () => ModLoc.NewRun, OnNewRunPressed),
+        ("SwitchCharacter", () => ModLoc.SwitchCharacter, OnSwitchCharacterPressed),
+        ("KeyBinds", () => ModLoc.KeyBinds, OnKeyBindsPressed),
     ];
 
     private static NPauseMenu? _currentMenu;
@@ -89,20 +90,18 @@ internal static class PauseMenuButtonInjector
         int ok = 0;
         foreach (var (name, label, handler) in Buttons)
         {
-            // "重启本层"按钮文本实时带当前幕数（如"重启本层（第 2 幕）"）
-            string text = name == "RestartFloor" ? GetFloorLabel() : label;
-            if (EnsureButton(templateBtn, name, text, buttonContainer, handler) != null)
+            if (EnsureButton(templateBtn, name, label(), buttonContainer, handler) != null)
                 ok++;
         }
 
         Entry.Logger?.Info($"[QuickRestart] 暂停菜单重启按钮与快捷键设置已注入（{ok}/{Buttons.Length}）");
     }
 
-    /// <summary>"重启本层"按钮文本：实时带当前幕数（如"重启本层（第 2 幕）"）。</summary>
+    /// <summary>"重启本层"按钮文本：实时带当前幕数（如中文「重启本层（第 2 幕）」/ 英文 "Restart Act (Act 2)"）。</summary>
     private static string GetFloorLabel()
     {
         int act = TryGetCurrentActIndex();
-        return act >= 0 ? $"重启本层（第 {act + 1} 幕）" : "重启本层";
+        return ModLoc.RestartFloorWithAct(act + 1);
     }
 
     /// <summary>当前幕索引（0 基）；非 run 状态或失败返回 -1。</summary>
@@ -187,31 +186,30 @@ internal static class PauseMenuButtonInjector
         Entry.Logger?.Info("[QuickRestart] 点击重启本层");
         int act = TryGetCurrentActIndex();
         string text = act >= 0
-            ? $"确认回到第 {act + 1} 幕起点重新选路？\n（本幕获得的金币/卡牌/遗物/药水/血量将全部回退）"
-            : "确认回到当前幕起点重新选路？";
-        ConfirmPopupHelper.ShowConfirm("重启本层", text,
+            ? ModLoc.ConfirmRestartFloor(act + 1)
+            : ModLoc.ConfirmRestartFloorNoAct;
+        ConfirmPopupHelper.ShowConfirm(ModLoc.RestartFloor, text,
             () => _ = RestartService.ExecuteRestart(RestartService.RestartType.RestartFloor));
     }
 
     private static void OnRestartRunPressed(NButton btn)
     {
         Entry.Logger?.Info("[QuickRestart] 点击重启本局");
-        ConfirmPopupHelper.ShowConfirm("重启本局", "确认同角色同种子重新开局？",
+        ConfirmPopupHelper.ShowConfirm(ModLoc.RestartRun, ModLoc.ConfirmRestartRun,
             () => _ = RestartService.ExecuteRestart(RestartService.RestartType.RestartRun));
     }
 
     private static void OnNewRunPressed(NButton btn)
     {
         Entry.Logger?.Info("[QuickRestart] 点击重启新局");
-        ConfirmPopupHelper.ShowConfirm("重启新局", "确认同角色新随机种子全新开局？",
+        ConfirmPopupHelper.ShowConfirm(ModLoc.NewRun, ModLoc.ConfirmNewRun,
             () => _ = RestartService.ExecuteRestart(RestartService.RestartType.NewRun));
     }
 
     private static void OnSwitchCharacterPressed(NButton btn)
     {
         Entry.Logger?.Info("[QuickRestart] 点击换角色开新局");
-        ConfirmPopupHelper.ShowConfirm("换角色开新局",
-            "确认丢弃当前局面、回到角色选择界面？\n（本局不写入战绩，但存档会被删除，无法用「继续游戏」找回）",
+        ConfirmPopupHelper.ShowConfirm(ModLoc.SwitchCharacter, ModLoc.ConfirmSwitchCharacter,
             () => _ = RestartService.ExecuteRestart(RestartService.RestartType.SwitchCharacter));
     }
 

@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Nodes;
 
 namespace QuickRestart;
 
@@ -27,6 +28,7 @@ internal static class RestartOverlay
             if (!EnsureBuilt())
                 return;
 
+            RefreshFontIfNeeded();
             KillTween(ref _rectTween);
             ClearNote();
 
@@ -52,6 +54,7 @@ internal static class RestartOverlay
             if (!EnsureBuilt() || string.IsNullOrEmpty(text))
                 return;
 
+            RefreshFontIfNeeded();
             KillTween(ref _noteTween);
             _note!.Text = text;
             _note.Visible = true;
@@ -136,6 +139,30 @@ internal static class RestartOverlay
         _note.Text = string.Empty;
     }
 
+    /// <summary>
+    /// 重新解析字体覆盖。本层的 CanvasLayer 是常驻的（建一次反复用），而游戏换语言时
+    /// <c>NGame.Relocalize</c> 不会碰模组的层 —— 只在创建时解析一次的话，玩家切完语言
+    /// 这里的提示会一直用旧字体。每次显示前重解析即可（FontManager 内部有缓存，成本可忽略）。
+    /// </summary>
+    private static void RefreshFontIfNeeded()
+    {
+        try
+        {
+            if (_note == null || !GodotObject.IsInstanceValid(_note))
+                return;
+            ModFonts.RefreshGameFont(_note, ResolveProbe());
+        }
+        catch (Exception ex)
+        {
+            Entry.Logger?.Warn($"[QuickRestart] 过场提示字体刷新失败（不影响功能）: {ex.Message}");
+        }
+    }
+
+    /// <summary>当前可用的字体探测点（取游戏场景里的 Label；取不到交给 ModFonts 兜底）。</summary>
+    private static Control? ResolveProbe()
+        => ModFonts.FindProbe(NGame.Instance?.RootSceneContainer)
+           ?? ModFonts.FindProbe(Engine.GetMainLoop() is SceneTree t ? t.Root : null);
+
     private static bool EnsureBuilt()
     {
         if (Engine.GetMainLoop() is not SceneTree tree)
@@ -174,9 +201,10 @@ internal static class RestartOverlay
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
-        // 中文必须用系统字体：Godot 默认字体不含 CJK 字形（雅黑优先，黑体兜底）
-        _note.AddThemeFontOverride("font",
-            new SystemFont { FontNames = new[] { "Microsoft YaHei UI", "Microsoft YaHei", "SimHei" } });
+        // 字体跟随游戏当前语言（游戏按语言替换字体文件；见 ModFonts 注释）。
+        // 探测点优先取当前场景（RootSceneContainer 是 Control，其下必然有游戏自己的 Label）；
+        // 取不到就靠 ModFonts 内部的兜底，不影响功能。
+        ModFonts.ApplyGameFont(_note, ResolveProbe());
         _note.AddThemeFontSizeOverride("font_size", 26);
         _note.AddThemeColorOverride("font_color", new Color(0.95f, 0.95f, 0.95f));
         _note.SetAnchorsPreset(Control.LayoutPreset.FullRect);

@@ -25,7 +25,8 @@ internal static partial class RestartService
     /// 战斗结算选牌界面的「重新挑战」：放弃本次奖励、整场重打。
     /// 语义 = 重启房间（回滚到进房前 + 自动重进本节点，问号房照原掷骰重演）。
     /// </summary>
-    public static Task RetryCombatAsync() => RunGuardedAsync("重新挑战", RetryCombatCoreAsync);
+    public static Task RetryCombatAsync()
+        => RunGuardedAsync(ModLoc.ConfirmTitle(RestartKind.PostCombatRetry), RetryCombatCoreAsync);
 
     private static async Task RetryCombatCoreAsync()
     {
@@ -41,7 +42,8 @@ internal static partial class RestartService
     /// </summary>
     // ★ allowDaily：这是原地回滚（不改种子、不重开局），每日挑战局的"刀下留人"要留这条出路；
     //   联机下两个出路都不给，见 NetGuard。
-    public static Task RewindToMapAsync() => RunGuardedAsync("回到地图", RewindToMapCoreAsync, allowDaily: true);
+    public static Task RewindToMapAsync()
+        => RunGuardedAsync(ModLoc.BackToMap, RewindToMapCoreAsync, allowDaily: true);
 
     private static async Task RewindToMapCoreAsync()
     {
